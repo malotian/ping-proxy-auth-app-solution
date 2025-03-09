@@ -1,12 +1,20 @@
 {
   "name": "app",
   "version": "1.0.0",
+  "description": "Tier-A application for staples domain",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
+    "cookie-parser": "^1.4.6",
     "dotenv": "^16.0.0",
     "express": "^4.18.2"
-  }
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "author": "",
+  "license": "ISC"
 }
