@@ -1,27 +1,25 @@
-version: '3.8'
-
 services:
-  stalples-tier-a-app:
-    build: ./stalples-tier-a-app
+  staples-tier-a-app:
+    build: ./staples-tier-a-app
     ports:
       - "3001:3001"
     environment:
       - PORT=3001
 
-  stalples-auth-service:
-    build: ./stalples-auth-service
+  staples-auth-service:
+    build: ./staples-auth-service
     ports:
       - "3002:3002"
     environment:
       - PORT=3002
 
-  stalples-rev-proxy:
-    build: ./stalples-rev-proxy
+  staples-rev-proxy:
+    build: ./staples-rev-proxy
     ports:
       - "3000:3000"
     environment:
       - PORT=3000
-      - TARGET=http://stalples-tier-a-app:3001
+      - TARGET=http://staples-tier-a-app:3001
     depends_on:
-      - stalples-tier-a-app
-      - stalples-auth-service
+      - staples-tier-a-app
+      - staples-auth-service
