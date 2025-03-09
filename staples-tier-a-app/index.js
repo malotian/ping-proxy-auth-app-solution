@@ -8,14 +8,14 @@ app.use(express.json());
 app.get('/login', (req, res) => {
   res.json({
     message: 'Login page rendered',
-    receivedHeaders: req.headers
+    receivedHeaders: req.rawHeaders
   });
 });
 
 app.post('/login', (req, res) => {
   res.json({
     message: 'Login successful',
-    receivedHeaders: req.headers,
+    receivedHeaders: req.rawHeaders,
     data: req.body
   });
 });

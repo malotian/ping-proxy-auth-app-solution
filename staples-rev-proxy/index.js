@@ -9,36 +9,41 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
-const proxy = createProxyMiddleware({
-  target: config.mainAppUrl, // Forward the request to the main app (Tier A)
-  changeOrigin: true,
-  onProxyReq: async (proxyReq, req, res) => {
-    try {
-      // Call the auth service for advice using the complete HTTP request context.
-      const adviceResponse = await axios.post(config.authServiceUrl, {
-        url: req.originalUrl,
-        headers: req.headers,
-        cookies: req.cookies
-      });
-      
-      // Log the received advice response
-      console.log('Received advice response:', adviceResponse.data);
-      
-      const advice = adviceResponse.data;
-      if (advice.adviceHeaders) {
-        // Apply each advised header to the outgoing proxy request.
-        Object.entries(advice.adviceHeaders).forEach(([key, value]) => {
+app.use(async (req, res, next) => {
+  try {
+    console.log(`Pre-proxy: calling auth service for ${req.method} ${req.originalUrl}`);
+    const adviceResponse = await axios.post(config.authServiceUrl, {
+      url: req.originalUrl,
+      headers: req.headers,
+      cookies: req.cookies
+    });
+    console.log('Pre-proxy advice response:', adviceResponse.data);
+    // Attach advised headers to the request object for later use.
+    req.adviceHeaders = adviceResponse.data.adviceHeaders || {};
+  } catch (error) {
+    console.error('Pre-proxy error retrieving advice:', error.message);
+    // Decide: either continue without advice or handle the error.
+    req.adviceHeaders = {};
+  }
+  next();
+});
+
+app.use(
+  '/',
+  createProxyMiddleware({
+    target: config.mainAppUrl, // Forward the request to the main app (Tier A)
+    changeOrigin: true,
+    onProxyReq: (proxyReq, req, res) => {
+      // Use the advice headers that were attached in the middleware.
+      if (req.adviceHeaders) {
+        console.log('Applying advised headers:', req.adviceHeaders);
+        Object.entries(req.adviceHeaders).forEach(([key, value]) => {
           proxyReq.setHeader(key, value);
         });
       }
-    } catch (error) {
-      console.error('Error retrieving advice:', error.message);
-      // Optionally, forward the request or handle the error as needed.
     }
-  }
-});
-
-app.use('/', proxy);
+  })
+);
 
 app.listen(config.port, () => {
   console.log(`staples-rev-proxy listening on port ${config.port}`);
