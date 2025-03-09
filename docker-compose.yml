@@ -1,25 +1,34 @@
 services:
-  staples-tier-a-app:
-    build: ./staples-tier-a-app
+  app:
+    build: ./app
     ports:
-      - "3001:3001"
+      - '3001:3001'
     environment:
       - PORT=3001
-
-  staples-auth-service:
-    build: ./staples-auth-service
+    networks:
+      - lab.com
+    hostname: app.lab.com
+  auth:
+    build: ./auth
     ports:
-      - "3002:3002"
+      - '3002:3002'
     environment:
       - PORT=3002
-
-  staples-rev-proxy:
-    build: ./staples-rev-proxy
+    networks:
+      - lab.com
+    hostname: auth.lab.com
+  proxy:
+    build: ./proxy
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
       - PORT=3000
-      - TARGET=http://staples-tier-a-app:3001
+      - 'TARGET=http://app.lab.com:3001'
     depends_on:
-      - staples-tier-a-app
-      - staples-auth-service
+      - app
+    networks:
+      - lab.com
+    hostname: proxy.lab.com
+networks:
+  lab.com:
+    driver: bridge

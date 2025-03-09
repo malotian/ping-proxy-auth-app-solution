@@ -4,7 +4,7 @@ const axios = require('axios');
 const cookieParser = require('cookie-parser');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
-const config = require('./config');  // Contains: port, mainAppUrl, authServiceUrl, pingAuthUrl, pingRenewUrl, pingExchangeUrl
+const config = require('./config'); 
 
 const app = express();
 app.use(express.json());
@@ -76,14 +76,14 @@ app.post('/advice', async (req, res) => {
       if (session.FingerPrint === deviceId) {
         // Check if the access token is expired.
         if (isAccessTokenExpired(session)) {
-          // If refresh token is valid, renew the access token via PING.
+          // If refresh token is valid, renew the access token via IDAAS.
           if (isRefreshTokenValid(session)) {
-            // Simulate a back-channel call to PING for token renewal.
-            const pingResponse = await axios.post(config.pingRenewUrl, {
+            // Simulate a back-channel call to IDAAS for token renewal.
+            const idaasResponse = await axios.post(config.idaasRenewUrl, {
               refreshToken: session.RefreshToken
             });
-            session.AccessToken = pingResponse.data.AccessToken;
-            session.RefreshToken = pingResponse.data.RefreshToken;
+            session.AccessToken = idaasResponse.data.AccessToken;
+            session.RefreshToken = idaasResponse.data.RefreshToken;
             session.FingerPrint = deviceId;
           } else {
             // Refresh token is invalid; require re-authentication.
@@ -120,8 +120,8 @@ app.post('/advice', async (req, res) => {
         RefreshToken: null,
         FingerPrint: deviceId
       };
-      // Compose the PING authentication URL with redirect URI set to /callback.
-      const authnUrl = `${config.pingAuthUrl}?redirecturi=/callback&session=${sessionUUID}`;
+      // Compose the IDAAS authentication URL with redirect URI set to /callback.
+      const authnUrl = `${config.idaasAuthorizeEndpoint}?redirecturi=/callback&session=${sessionUUID}`;
       adviceHeaders = {
         HTTP_STAPLES_AUTHN_URL: authnUrl,
         HTTP_STAPLES_UUID: sessionUUID
@@ -138,7 +138,7 @@ app.post('/advice', async (req, res) => {
 });
 
 /**
- * /callback endpoint: Handles the callback from PING after user authentication.
+ * /callback endpoint: Handles the callback from IDAAS after user authentication.
  * Exchanges the authorization code for tokens and updates the session record.
  */
 app.post('/callback', async (req, res) => {
@@ -149,8 +149,8 @@ app.post('/callback', async (req, res) => {
       return res.status(400).json({ error: 'Missing code or session UUID' });
     }
     
-    // Simulate back-channel call to PING to exchange the code for tokens.
-    const pingResponse = await axios.post(config.pingExchangeUrl, { code });
+    // Simulate back-channel call to IDAAS to exchange the code for tokens.
+    const idaasResponse = await axios.post(config.idaasAccessTokenEndpoint, { code });
     
     // Retrieve the session record.
     let session = sessionStore[sessionUUID];
@@ -158,12 +158,12 @@ app.post('/callback', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
     
-    // Update the session record with tokens from PING.
-    session.AccessToken = pingResponse.data.AccessToken;
-    session.IdToken = pingResponse.data.IdToken;
-    session.RefreshToken = pingResponse.data.RefreshToken;
+    // Update the session record with tokens from IDAAS.
+    session.AccessToken = idaasResponse.data.AccessToken;
+    session.IdToken = idaasResponse.data.IdToken;
+    session.RefreshToken = idaasResponse.data.RefreshToken;
     session.FingerPrint = computeDeviceFingerprint(req);
-    if (pingResponse.data.rememberMe) {
+    if (idaasResponse.data.rememberMe) {
       session.rememberMe = true;
     }
     

@@ -21,5 +21,5 @@ app.post('/login', (req, res) => {
 });
 
 app.listen(config.port, () => {
-  console.log(`staples-tier-a-app listening on port ${config.port}`);
+  console.log(`app listening on port ${config.port}`);
 });
