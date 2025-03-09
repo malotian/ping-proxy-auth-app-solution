@@ -1,13 +1,7 @@
 {
 	"folders": [
 		{
-			"path": "stalples-auth-service"
-		},
-		{
-			"path": "stalples-rev-proxy"
-		},
-		{
-			"path": "stalples-tier-a-app"
+			"path": "."
 		}
 	]
 }
