@@ -25,7 +25,6 @@ app.use(async (req, res, next) => {
     try {
 
       console.log(`Calling auth service for advice at ${config.authServiceUrl}`);
-      console.log("Cookies:", JSON.stringify(req.cookies, null, 2));
 
       context = {
         method: req.method,
