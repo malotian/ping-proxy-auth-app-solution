@@ -8,6 +8,7 @@ const config = require('./config');
 
 const app = express();
 app.use(express.json());
+
 app.use(cookieParser());
 
 // In-memory persistence store (for demo purposes)
@@ -17,15 +18,9 @@ const sessionStore = {};
  * Compute a device fingerprint based on IP and User-Agent.
  * In a real system, you might include additional factors.
  */
-function computeDeviceFingerprint(req) {
-  // Use X-Forwarded-For header if available (common when behind a proxy)
-  const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
-  const userAgent = req.get('User-Agent') || '';
-  const accept = req.get('Accept') || '';
-  const acceptLanguage = req.get('Accept-Language') || '';
-
+function computeDeviceFingerprint(context) {
   // Combine the values into one string
-  const fingerprintData = ip + userAgent + accept + acceptLanguage;
+  const fingerprintData = context.ip + context.userAgent + context.accept + context.acceptLanguage;
 
   // Compute a SHA-256 hash of the combined string to use as the fingerprint
   return crypto.createHash('sha256').update(fingerprintData).digest('hex');
@@ -57,86 +52,129 @@ function buildStaplesJWT(session) {
 }
 
 /**
- * /advice endpoint: Called by NGINX with complete HTTP request context.
- * This endpoint inspects the request, computes a device fingerprint,
- * and checks if a valid session exists (by examining COOKIE_STAPLES_SESSION).
+ * /advice endpoint: Called by NGINX with full HTTP request context.
+ * It inspects the request, computes a device fingerprint,
+ * and checks if a valid session exists via COOKIE_STAPLES_SESSION.
  */
 app.post('/advice', async (req, res) => {
   try {
-    // Compute device fingerprint from request (e.g., IP and User-Agent)
-    const deviceId = computeDeviceFingerprint(req);
+    console.log("Received request at /advice");
 
-    // Check for existing session cookie
-    let sessionUUID = req.cookies['COOKIE_STAPLES_SESSION'];
+    // context = {
+    //   method: req.method,
+    //   url: req.originalUrl,
+    //   headers: req.headers,
+    //   body: req.body,
+    //   query: req.query,
+    //   params: req.params,
+    //   // Convert cookies to a string format (if needed)
+    //   cookies: req.cookies ? Object.entries(req.cookies).map(([key, value]) => `${key}=${value}`).join('; ') : '',
+    //   ip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.connection?.remoteAddress || 'Unknown',
+    //   userAgent: req.get('User-Agent') || '',
+    //   accept: req.get('Accept') || '',
+    //   acceptLanguage: req.get('Accept-Language') || ''
+    // };
+    
+    const context = req.body;
+
+    console.log('Context:', JSON.stringify(context, null, 2));
+
+
+    // Step 1: Compute device fingerprint
+    const deviceId = computeDeviceFingerprint(context);
+    console.log(`Computed Device Fingerprint: ${deviceId}`);
+
+    let sessionUUID = context.cookies['COOKIE_STAPLES_SESSION'];
+
+    if (sessionUUID) {
+        console.log(`Found: COOKIE_STAPLES_SESSION: ${sessionUUID}`);
+    } else {
+        console.log("Not Found: COOKIE_STAPLES_SESSION");
+    }
+
     let session = sessionUUID ? sessionStore[sessionUUID] : null;
-
-    // If a session exists, validate it.
+    
     if (session) {
-      // Compare the session fingerprint with the current device fingerprint
-      if (session.FingerPrint === deviceId) {
-        // Check if the access token is expired.
-        if (isAccessTokenExpired(session)) {
-          // If refresh token is valid, renew the access token via IDAAS.
-          if (isRefreshTokenValid(session)) {
-            // Simulate a back-channel call to IDAAS for token renewal.
+      console.log(`Session found for UUID: ${sessionUUID}`);
+
+      // Step 3: Validate session fingerprint
+      if (session.FingerPrint !== deviceId) {
+        console.warn(`Fingerprint mismatch! Possible session hijacking for UUID: ${sessionUUID}`);
+        session = null; // Invalidate session to force re-authentication
+      } else if (isAccessTokenExpired(session)) {
+        console.log(`Access token expired for UUID: ${sessionUUID}`);
+
+        // Step 4: Attempt token renewal if refresh token is valid
+        if (isRefreshTokenValid(session)) {
+          try {
+            console.log(`Refreshing access token for UUID: ${sessionUUID}`);
             const idaasResponse = await axios.post(config.idaasRenewUrl, {
               refreshToken: session.RefreshToken
             });
+
             session.AccessToken = idaasResponse.data.AccessToken;
             session.RefreshToken = idaasResponse.data.RefreshToken;
-            session.FingerPrint = deviceId;
-          } else {
-            // Refresh token is invalid; require re-authentication.
-            session = null;
+            session.FingerPrint = deviceId; // Update fingerprint after successful refresh
+
+            console.log(`Access token refreshed successfully for UUID: ${sessionUUID}`);
+          } catch (err) {
+            console.error(`Error refreshing token for UUID: ${sessionUUID}`, err.message);
+            session = null; // Force re-authentication on failure
           }
+        } else {
+          console.warn(`Refresh token invalid for UUID: ${sessionUUID}, requiring re-authentication.`);
+          session = null; // Force re-authentication
         }
-      } else {
-        // Fingerprint mismatch: possible cookie theft. Require re-authentication.
-        session = null;
       }
+    } else {
+      console.log("No valid session found, initiating authentication flow.");
     }
 
-    // Prepare advice headers to be sent back to NGINX.
+    // Step 5: Generate response headers for NGINX
     let adviceHeaders = {};
 
     if (session && session.AccessToken) {
-      // Valid session found. Build the StaplesJWT.
+      console.log(`Valid session found for UUID: ${sessionUUID}. Generating JWT.`);
+
+      // Build Staples JWT
       let staplesJWT = buildStaplesJWT(session);
       if (session.rememberMe) {
-        // Add claim if remember_me is active.
         staplesJWT.remember_me = true;
       }
+
       adviceHeaders = {
         HTTP_STAPLES_JWT: staplesJWT.token,
         HTTP_STAPLES_UUID: sessionUUID
       };
     } else {
-      // No valid session exists: trigger new authentication flow.
-      // Generate a new UUID and initialize a session record.
+      // No valid session -> Start new authentication flow
       sessionUUID = uuidv4();
       const state = uuidv4();
       const nonce = uuidv4();
+
       sessionStore[sessionUUID] = {
         AccessToken: null,
         IdToken: null,
         RefreshToken: null,
         FingerPrint: deviceId,
-        nonce: nonce // store nonce for later validation
+        nonce: nonce // Store nonce for validation later
       };
 
-      // Compose the IDAAS authentication URL 
-      const params = new URLSearchParams({
+      console.log(`New authentication flow initiated. Generated UUID: ${sessionUUID}`);
+
+      // Build IDAAS authentication URL
+      const authParams = new URLSearchParams({
         client_id: config.idaasClientID,
         redirect_uri: config.appCallbackEnpoint,
         scope: config.scope,
         response_type: config.response_type,
         state: state,
         nonce: nonce,
-        acr_values: config.acrValues,
+        acr_values: config.acrValues
       });
 
-      // Build the full authentication URL
-      const authnUrl = `${config.idaasAuthorizeEndpoint}?${params.toString()}`;
+      const authnUrl = `${config.idaasAuthorizeEndpoint}?${authParams.toString()}`;
+      console.log(`Generated authentication URL: ${authnUrl}`);
 
       adviceHeaders = {
         HTTP_STAPLES_AUTHN_URL: authnUrl,
@@ -144,14 +182,16 @@ app.post('/advice', async (req, res) => {
       };
     }
 
-    // Send advice back to NGINX.
+    // Step 6: Send response to NGINX
+    console.log("Sending response headers to NGINX:", adviceHeaders);
     res.json({ adviceHeaders });
 
   } catch (error) {
     console.error('Error in /advice:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
 
 /**
  * /callback endpoint: Handles the callback from IDAAS after user authentication.

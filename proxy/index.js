@@ -19,16 +19,31 @@ const targets = {
 app.use(async (req, res, next) => {
   const host = req.headers.host;
   console.log(`Incoming request for host: ${host} ${req.method} ${req.originalUrl}`);
-  
+
   // Only call advice service if this request is for the app app.
   if (host && host.toLowerCase().startsWith('app.lab.com')) {
     try {
+
       console.log(`Calling auth service for advice at ${config.authServiceUrl}`);
-      const adviceResponse = await axios.post(config.authServiceUrl, {
+      console.log("Cookies:", JSON.stringify(req.cookies, null, 2));
+
+      context = {
+        method: req.method,
         url: req.originalUrl,
         headers: req.headers,
-        cookies: req.cookies
-      });
+        body: req.body,
+        query: req.query,
+        params: req.params,
+        // Convert cookies to a string format (if needed)
+        cookies: req.cookies,
+        ip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.connection?.remoteAddress || 'Unknown',
+        userAgent: req.get('User-Agent') || '',
+        accept: req.get('Accept') || '',
+        acceptLanguage: req.get('Accept-Language') || ''
+      };
+
+      const adviceResponse = await axios.post(config.authServiceUrl, context);
+
       console.log('Pre-proxy advice response:', adviceResponse.data);
       // Attach advised headers to the request object for later use.
       req.adviceHeaders = adviceResponse.data.adviceHeaders || {};
