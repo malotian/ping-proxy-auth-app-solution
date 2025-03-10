@@ -1,57 +1,97 @@
 require('dotenv').config();
 const express = require('express');
+const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const config = require('./config');
+const crypto = require('crypto');
+
 const app = express();
 
+// Middleware
 app.use(express.json());
 app.use(cookieParser());
 
-// Tier-A /login GET endpoint
-app.get('/login', (req, res) => {
-  // Retrieve custom headers set by the reverse proxy.
-  const authnUrl = req.headers['http_staples_authn_url']; // AuthnURL provided if re-authentication is needed
-  const jwtHeader = req.headers['http_staples_jwt'];         // JWT token (with possible "remember_me" attribute)
-  const sessionUUID = req.headers['http_staples_uuid'];       // Session UUID
-
-  console.log('Received headers in Tier-A /login:', req.headers);
-
-  if (authnUrl) {
-    // Redirect the browser to the IDAAS/PING authentication endpoint
-    console.log(`Redirecting to authentication URL: ${authnUrl}`);
-    return res.redirect(authnUrl);
-  } else if (jwtHeader && sessionUUID) {
-    // If JWT and UUID are provided, set a cookie for session tracking.
-    // Determine cookie options based on the "remember_me" claim.
-    let cookieOptions = {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'strict'
-    };
-    
-    if (jwtHeader.includes('remember_me:true')) {
-      // Set cookie expiration for 180 days if remember_me is active.
-      cookieOptions.maxAge = 180 * 24 * 60 * 60 * 1000;
-    }
-
-    res.cookie('COOKIE_STAPLES_SESSION', sessionUUID, cookieOptions);
-    console.log(`Setting session cookie: ${sessionUUID}`, cookieOptions);
-    return res.send(`<h1>Session Established</h1><p>Session cookie set: ${sessionUUID}</p>`);
-  } else {
-    // No advice headers found – render a basic login page.
-    return res.send('<h1>Login Page</h1><p>Please login to continue.</p>');
+// Override session ID from headers if provided
+app.use((req, res, next) => {
+  if (req.headers['http_staples_uuid']) {
+    req.sessionID = req.headers['http_staples_uuid'];
   }
+  next();
 });
 
-// Tier-A /login POST endpoint for processing login form submission (if applicable)
-app.post('/login', (req, res) => {
-  res.json({
-    message: 'Login successful (Tier-A)',
-    receivedHeaders: req.rawHeaders,
-    data: req.body
+// Configure express-session
+app.use(session({
+  genid: (req) => req.sessionID || crypto.randomUUID(), // Use custom session ID or generate one
+  name: 'COOKIE_STAPLES_SESSION', // Custom session cookie name
+  secret: config.sharedSessionSecret, // Used for signing session ID
+  resave: false,  
+  saveUninitialized: false, // Avoid saving empty sessions
+  cookie: {
+    httpOnly: true,  
+    secure: process.env.NODE_ENV === 'production', // Only secure in production
+    sameSite: 'strict',  
+    maxAge: null // Default session cookie (expires on browser close)
+  }
+}));
+
+// Tier-A /login GET endpoint
+app.get('/login', (req, res) => {
+  console.log('Received headers in Tier-A /login:', req.rawHeaders);
+
+  const authnUrl = req.headers['http_staples_authn_url'];
+  const jwtHeader = req.headers['http_staples_jwt'];
+  const sessionUUID = req.headers['http_staples_uuid'];
+
+  if (authnUrl) {
+    console.log(`Redirecting to authentication URL: ${authnUrl}`);
+    return res.redirect(authnUrl);
+  }
+
+  if (jwtHeader && sessionUUID) {
+    // Store session data
+    req.session.user = {
+      sessionUUID,
+      jwt: jwtHeader,
+      rememberMe: jwtHeader.includes('remember_me:true')
+    };
+
+    // If remember_me is true, extend session expiration
+    if (req.session.user.rememberMe) {
+      req.session.cookie.maxAge = 180 * 24 * 60 * 60 * 1000; // 180 days
+    }
+
+    console.log(`Session established for: ${sessionUUID}`);
+    return res.send(`<h1>Session Established</h1><p>Session cookie set with sessionUUID: ${sessionUUID}</p>`);
+  }
+
+  return res.send('<h1>Login Page</h1><p>Please login to continue.</p>');
+});
+
+// Logout Endpoint (to destroy session)
+app.get('/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('Error destroying session:', err);
+      return res.status(500).send('Failed to logout');
+    }
+
+    res.clearCookie('COOKIE_STAPLES_SESSION');
+    return res.send('<h1>Logged Out</h1><p>Session cleared successfully.</p>');
   });
 });
 
+// Check Session
+app.get('/session-check', (req, res) => {
+  if (req.session.user) {
+    return res.json({
+      message: 'Session Active',
+      sessionData: req.session.user
+    });
+  }
+  return res.status(401).json({ message: 'No active session' });
+});
+
+// Start server
 app.listen(config.port, () => {
-  console.log(`Tier-A (staples) app listening on port ${config.port}`);
+  console.log(`app listening on port ${config.port}`);
 });
