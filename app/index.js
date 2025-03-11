@@ -156,7 +156,7 @@ app.get('/callback', async (req, res) => {
       req.stapleJWT = decoded;
 
       // Send successful response
-      return res.json({ message: "Token validation successful", user: decoded });
+      return res.json({ message: "Token validation successful", stapleJWT: decoded });
     });
 
   } catch (error) {
