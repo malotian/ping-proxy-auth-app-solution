@@ -5,6 +5,9 @@ const cookieParser = require('cookie-parser');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const config = require('./config');
+const qs = require('qs');
+const jwt = require("jsonwebtoken");
+const jwks = require("jwks-rsa");
 
 const app = express();
 app.use(express.json());
@@ -13,6 +16,33 @@ app.use(cookieParser());
 
 // In-memory persistence store (for demo purposes)
 const sessionStore = {};
+
+// Generate RSA Key Pair (for demo purposes, use a real key in production)
+const { generateKeyPairSync } = require("crypto");
+const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: "spki", format: "pem" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+});
+
+
+// Serve JWKS endpoint
+app.get("/.well-known/jwks.json", (req, res) => {
+  res.json({
+    keys: [
+      {
+        kty: "RSA",
+        kid: "staples-kid",
+        use: "sig",
+        alg: "RS256",
+        n: Buffer.from(publicKey.split("\n").slice(1, -1).join(""), "base64").toString(
+          "base64url"
+        ),
+        e: "AQAB",
+      },
+    ],
+  });
+});
 
 /**
  * Compute a device fingerprint based on IP and User-Agent.
@@ -48,7 +78,12 @@ function isRefreshTokenValid(session) {
  */
 function buildStaplesJWT(session) {
   // For demo, return a simple token string.
-  return { token: `JWT-${session.AccessToken || 'no-token'}` };
+
+  return jwt.sign(session, privateKey, {
+    algorithm: "RS256",
+    expiresIn: "1h",
+    keyid: "staples-kid", // Important for JWKS
+  });
 }
 
 /**
@@ -104,6 +139,7 @@ app.post('/advice', async (req, res) => {
       }
       else if (contextUrl.searchParams.has('code') && contextUrl.pathname.endsWith('/callback')) {
         console.log("Code recived");
+
         const data = qs.stringify({
           grant_type: 'authorization_code',
           code: contextUrl.searchParams.get('code'),
@@ -122,17 +158,24 @@ app.post('/advice', async (req, res) => {
 
         try {
           const idaasResponse = await axios.request(tokenConfig);
-          session.AccessToken = idaasResponse.data.AccessToken;
-          session.IdToken = idaasResponse.data.IdToken;
-          session.RefreshToken = idaasResponse.data.RefreshToken;
+
+          console.log("IDAAS Response:", idaasResponse.data);
+
+          session.AccessToken = idaasResponse.data.access_token;
+          session.IdToken = idaasResponse.data.id_token;
+          session.RefreshToken = idaasResponse.data.refresh_token;
           session.FingerPrint = deviceId;
+          console.log(`Session updated after token exchange:\n`, JSON.stringify(session, null, 2));
+
           if (idaasResponse.data.rememberMe) session.rememberMe = true;
 
           const staplesJWT = buildStaplesJWT(session);
-          logger.info(`Session ${sessionUUID} updated after token exchange. Sending JWT.`);
+
+          console.log(`Created staplesJWT: ${staplesJWT}`);
+
           return res.json({ headers: { HTTP_STAPLES_JWT: staplesJWT.token } });
         } catch (error) {
-          logger.error(`Error exchanging token for session ${sessionUUID}: ${error.message}`);
+          console.log(`Error exchanging token for session ${sessionUUID}: ${error.message}`);
           return res.status(500).json({ error: error.message });
         }
       }
@@ -147,11 +190,12 @@ app.post('/advice', async (req, res) => {
               refreshToken: session.RefreshToken
             });
 
-            session.AccessToken = idaasResponse.data.AccessToken;
-            session.RefreshToken = idaasResponse.data.RefreshToken;
+            session.AccessToken = idaasResponse.data.access_token;
+            session.IdToken = idaasResponse.data.id_token;
+            session.RefreshToken = idaasResponse.data.refresh_token;
             session.FingerPrint = deviceId; // Update fingerprint after successful refresh
 
-            console.log(`Access token refreshed successfully for UUID: ${sessionUUID}`);
+            console.log(`Access token refreshed successfully:\n`, JSON.stringify(session, null, 2));
           } catch (err) {
             console.error(`Error refreshing token for UUID: ${sessionUUID}`, err.message);
             session = null; // Force re-authentication on failure
@@ -228,51 +272,6 @@ app.post('/advice', async (req, res) => {
 });
 
 
-/**
- * /callback endpoint: Handles the callback from IDAAS after user authentication.
- * Exchanges the authorization code for tokens and updates the session record.
- */
-app.post('/callback', async (req, res) => {
-  try {
-    // Extract the authorization code and session UUID from the callback request.
-    const { code, sessionUUID } = req.body;
-    if (!code || !sessionUUID) {
-      return res.status(400).json({ error: 'Missing code or session UUID' });
-    }
-
-    // Simulate back-channel call to IDAAS to exchange the code for tokens.
-    const idaasResponse = await axios.post(config.idaasAccessTokenEndpoint, { code });
-
-    // Retrieve the session record.
-    let session = sessionStore[sessionUUID];
-    if (!session) {
-      return res.status(404).json({ error: 'Session not found' });
-    }
-
-    // Update the session record with tokens from IDAAS.
-    session.AccessToken = idaasResponse.data.AccessToken;
-    session.IdToken = idaasResponse.data.IdToken;
-    session.RefreshToken = idaasResponse.data.RefreshToken;
-    session.FingerPrint = computeDeviceFingerprint(req);
-    if (idaasResponse.data.rememberMe) {
-      session.rememberMe = true;
-    }
-
-    // Build an updated StaplesJWT.
-    let staplesJWT = buildStaplesJWT(session);
-    if (session.rememberMe) {
-      staplesJWT.remember_me = true;
-    }
-
-    // Advise NGINX to set the HTTP_STAPLES_JWT header.
-    res.json({ headers: { HTTP_STAPLES_JWT: staplesJWT.token } });
-
-  } catch (error) {
-    console.error('Error in /callback:', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.listen(config.port, () => {
+app.listen(config.port, '0.0.0.0', () => { 
   console.log(`Auth service listening on port ${config.port}`);
 });

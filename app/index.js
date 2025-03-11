@@ -108,6 +108,6 @@ app.get('/session-check', (req, res) => {
 });
 
 // Start server
-app.listen(config.port, () => {
-  console.log(`Tier-A (staples) app listening on port ${config.port}`);
+app.listen(config.port, '0.0.0.0', () => { 
+  console.log(`app listening on port ${config.port}`);
 });

@@ -88,6 +88,6 @@ app.use(
   })
 );
 
-app.listen(config.port, () => {
+app.listen(config.port, '0.0.0.0', () => { 
   console.log(`Reverse proxy listening on port ${config.port}`);
 });
