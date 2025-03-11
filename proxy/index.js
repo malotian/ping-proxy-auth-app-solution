@@ -28,7 +28,7 @@ app.use(async (req, res, next) => {
 
       context = {
         method: req.method,
-        url: req.originalUrl,
+        url:  req.protocol + '://' + req.get('host') + req.originalUrl,
         headers: req.headers,
         body: req.body,
         query: req.query,

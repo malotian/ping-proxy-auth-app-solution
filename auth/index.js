@@ -74,7 +74,7 @@ app.post('/advice', async (req, res) => {
     //   accept: req.get('Accept') || '',
     //   acceptLanguage: req.get('Accept-Language') || ''
     // };
-    
+
     const context = req.body;
 
     console.log('Context:', JSON.stringify(context, null, 2));
@@ -87,21 +87,56 @@ app.post('/advice', async (req, res) => {
     let sessionUUID = context.cookies['COOKIE_STAPLES_SESSION'];
 
     if (sessionUUID) {
-        console.log(`Found: COOKIE_STAPLES_SESSION: ${sessionUUID}`);
+      console.log(`Found: COOKIE_STAPLES_SESSION: ${sessionUUID}`);
     } else {
-        console.log("Not Found: COOKIE_STAPLES_SESSION");
+      console.log("Not Found: COOKIE_STAPLES_SESSION");
     }
 
     let session = sessionUUID ? sessionStore[sessionUUID] : null;
-    
+    const contextUrl = new URL(context.url);
+
     if (session) {
       console.log(`Session found for UUID: ${sessionUUID}`);
-
       // Step 3: Validate session fingerprint
       if (session.FingerPrint !== deviceId) {
         console.warn(`Fingerprint mismatch! Possible session hijacking for UUID: ${sessionUUID}`);
         session = null; // Invalidate session to force re-authentication
-      } else if (isAccessTokenExpired(session)) {
+      }
+      else if (contextUrl.searchParams.has('code') && contextUrl.pathname.endsWith('/callback')) {
+        console.log("Code recived");
+        const data = qs.stringify({
+          grant_type: 'authorization_code',
+          code: contextUrl.searchParams.get('code'),
+          client_id: config.idaasClientID,
+          client_secret: config.idaasClientSecret,
+          redirect_uri: config.appCallbackEnpoint,
+        });
+
+        const tokenConfig = {
+          method: 'post',
+          maxBodyLength: Infinity,
+          url: config.idaasAccessTokenEndpoint,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          data,
+        };
+
+        try {
+          const idaasResponse = await axios.request(tokenConfig);
+          session.AccessToken = idaasResponse.data.AccessToken;
+          session.IdToken = idaasResponse.data.IdToken;
+          session.RefreshToken = idaasResponse.data.RefreshToken;
+          session.FingerPrint = deviceId;
+          if (idaasResponse.data.rememberMe) session.rememberMe = true;
+
+          const staplesJWT = buildStaplesJWT(session);
+          logger.info(`Session ${sessionUUID} updated after token exchange. Sending JWT.`);
+          return res.json({ headers: { HTTP_STAPLES_JWT: staplesJWT.token } });
+        } catch (error) {
+          logger.error(`Error exchanging token for session ${sessionUUID}: ${error.message}`);
+          return res.status(500).json({ error: error.message });
+        }
+      }
+      else if (isAccessTokenExpired(session)) {
         console.log(`Access token expired for UUID: ${sessionUUID}`);
 
         // Step 4: Attempt token renewal if refresh token is valid

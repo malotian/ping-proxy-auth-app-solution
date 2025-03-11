@@ -28,8 +28,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    secure: false,
     maxAge: null // Default session cookie (expires on browser close)
   }
 }));
@@ -66,7 +65,6 @@ app.get('/login', (req, res) => {
     let cookieOptions = {
       httpOnly: true,
       secure: false,
-      sameSite: 'Strict'
     };
     
     if (req.session.user.rememberMe) {
@@ -84,8 +82,6 @@ app.get('/login', (req, res) => {
 
   return res.send('<h1>Login Page</h1><p>Please login to continue.</p>');
 });
-
-
 
 // Logout Endpoint (to destroy session)
 app.get('/logout', (req, res) => {
