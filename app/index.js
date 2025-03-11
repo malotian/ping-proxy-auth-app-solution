@@ -5,6 +5,8 @@ const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');  // Import JWT package
 const config = require('./config');
 const crypto = require('crypto');
+const jwksClient = require("jwks-rsa");
+const axios = require("axios");
 
 const app = express();
 
@@ -46,7 +48,7 @@ const parseJWT = (token) => {
 
 // Tier-A /login GET endpoint
 app.get('/login', (req, res) => {
-  console.log('Received headers in Tier-A /login:', req.rawHeaders);
+  console.log('Received headers in app /login:', req.rawHeaders);
 
   const authnUrl = req.headers['http_staples_authn_url'];
   const jwtHeader = req.headers['http_staples_jwt'];
@@ -66,11 +68,11 @@ app.get('/login', (req, res) => {
       httpOnly: true,
       secure: false,
     };
-    
+
     if (req.session.user.rememberMe) {
       cookieOptions.maxAge = 180 * 24 * 60 * 60 * 1000; // 180 days
     }
-    
+
     res.cookie('COOKIE_STAPLES_SESSION', sessionUUID, cookieOptions);
     console.log(`Session established for: ${sessionUUID}`, req.session.user);
   }
@@ -107,7 +109,63 @@ app.get('/session-check', (req, res) => {
   return res.status(401).json({ message: 'No active session' });
 });
 
+// Set your JWKS URI (Replace with actual JWKS URI)
+const JWKS_URI = "http://auth.lab.com:3002/.well-known/jwks.json";
+
+// Initialize JWKS Client
+const client = jwksClient({
+  jwksUri: JWKS_URI,
+});
+
+// Function to get the signing key from JWKS
+function getSigningKey(header, callback) {
+  client.getSigningKey(header.kid, (err, key) => {
+    if (err) {
+      return callback(err);
+    }
+    const signingKey = key.publicKey || key.rsaPublicKey;
+    callback(null, signingKey);
+  });
+}
+
+/**
+ * /callback endpoint: Handles the callback from IDAAS after user authentication.
+ * Exchanges the authorization code for tokens and updates the session record.
+ */
+app.get('/callback', async (req, res) => {
+  try {
+    console.log('Received headers in /callback:', req.headers);
+
+    // Extract JWT token from headers
+    const staplesJWT = req.headers['http_staples_jwt'] || req.headers['HTTP_STAPLES_JWT'] || req.headers['http-staples-jwt'];
+
+    if (!staplesJWT) {
+      return res.status(401).json({ error: "No staplesJWT provided" });
+    }
+
+    // Retrieve the signing key dynamically
+    jwt.verify(staplesJWT, getSigningKey, { algorithms: ["RS256"] }, (err, decoded) => {
+      if (err) {
+        console.error("JWT verification failed:", err.message);
+        return res.status(401).json({ error: "Invalid staplesJWT token", details: err.message });
+      }
+
+      console.log("Token validation successful:", decoded);
+
+      // Store user info in request object (for further processing if needed)
+      req.stapleJWT = decoded;
+
+      // Send successful response
+      return res.json({ message: "Token validation successful", user: decoded });
+    });
+
+  } catch (error) {
+    console.error("Error processing /callback:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 // Start server
-app.listen(config.port, '0.0.0.0', () => { 
+app.listen(config.port, '0.0.0.0', () => {
   console.log(`app listening on port ${config.port}`);
 });

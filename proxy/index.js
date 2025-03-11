@@ -28,7 +28,7 @@ app.use(async (req, res, next) => {
 
       context = {
         method: req.method,
-        url:  req.protocol + '://' + req.get('host') + req.originalUrl,
+        url: req.protocol + '://' + req.get('host') + req.originalUrl,
         headers: req.headers,
         body: req.body,
         query: req.query,
@@ -88,6 +88,6 @@ app.use(
   })
 );
 
-app.listen(config.port, '0.0.0.0', () => { 
+app.listen(config.port, '0.0.0.0', () => {
   console.log(`Reverse proxy listening on port ${config.port}`);
 });

@@ -7,7 +7,8 @@ const crypto = require('crypto');
 const config = require('./config');
 const qs = require('qs');
 const jwt = require("jsonwebtoken");
-const jwks = require("jwks-rsa");
+const { generateKeyPairSync } = require("crypto");
+const forge = require("node-forge");
 
 const app = express();
 app.use(express.json());
@@ -17,16 +18,19 @@ app.use(cookieParser());
 // In-memory persistence store (for demo purposes)
 const sessionStore = {};
 
-// Generate RSA Key Pair (for demo purposes, use a real key in production)
-const { generateKeyPairSync } = require("crypto");
+// Generate RSA Key Pair
 const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   publicKeyEncoding: { type: "spki", format: "pem" },
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
 });
 
+// Convert Public Key to JWKS Format
+const forgeKey = forge.pki.publicKeyFromPem(publicKey);
+const n = Buffer.from(forgeKey.n.toByteArray()).toString("base64url");
+const e = Buffer.from(forgeKey.e.toByteArray()).toString("base64url");
 
-// Serve JWKS endpoint
+// Serve JWKS endpoint correctly
 app.get("/.well-known/jwks.json", (req, res) => {
   res.json({
     keys: [
@@ -35,15 +39,12 @@ app.get("/.well-known/jwks.json", (req, res) => {
         kid: "staples-kid",
         use: "sig",
         alg: "RS256",
-        n: Buffer.from(publicKey.split("\n").slice(1, -1).join(""), "base64").toString(
-          "base64url"
-        ),
-        e: "AQAB",
+        n: n,
+        e: e,
       },
     ],
   });
 });
-
 /**
  * Compute a device fingerprint based on IP and User-Agent.
  * In a real system, you might include additional factors.
@@ -82,7 +83,7 @@ function buildStaplesJWT(session) {
   return jwt.sign(session, privateKey, {
     algorithm: "RS256",
     expiresIn: "1h",
-    keyid: "staples-kid", // Important for JWKS
+    keyid: "staples-kid", // Ensure keyid matches JWKS kid
   });
 }
 
@@ -173,7 +174,7 @@ app.post('/advice', async (req, res) => {
 
           console.log(`Created staplesJWT: ${staplesJWT}`);
 
-          return res.json({ headers: { HTTP_STAPLES_JWT: staplesJWT.token } });
+          return res.json({ adviceHeaders: { HTTP_STAPLES_JWT: staplesJWT } });
         } catch (error) {
           console.log(`Error exchanging token for session ${sessionUUID}: ${error.message}`);
           return res.status(500).json({ error: error.message });
@@ -232,6 +233,7 @@ app.post('/advice', async (req, res) => {
       const nonce = uuidv4();
 
       sessionStore[sessionUUID] = {
+        SessionUUID: sessionUUID,
         AccessToken: null,
         IdToken: null,
         RefreshToken: null,
@@ -272,6 +274,6 @@ app.post('/advice', async (req, res) => {
 });
 
 
-app.listen(config.port, '0.0.0.0', () => { 
+app.listen(config.port, '0.0.0.0', () => {
   console.log(`Auth service listening on port ${config.port}`);
 });
