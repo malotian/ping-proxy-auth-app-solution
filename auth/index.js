@@ -9,11 +9,36 @@ const qs = require('qs');
 const jwt = require("jsonwebtoken");
 const { generateKeyPairSync } = require("crypto");
 const forge = require("node-forge");
+const winston = require('winston');
 
 const app = express();
 app.use(express.json());
-
 app.use(cookieParser());
+
+// Create a Winston logger with timestamp and structured output.
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    // Custom format: [timestamp] [LEVEL] message {optional meta}
+    winston.format.printf(({ level, message, timestamp, ...meta }) => {
+      return `${timestamp} [${level.toUpperCase()}] ${message}${Object.keys(meta).length ? ' ' + JSON.stringify(meta) : ''}`;
+    })
+  ),
+  transports: [new winston.transports.Console()]
+});
+
+// Middleware to attach a unique correlationId from the proxy header (or default).
+app.use((req, res, next) => {
+  req.correlationId = req.headers['proxy-correlation-id'] || 'N/A';
+  logger.info('Incoming request', {
+    correlationId: req.correlationId,
+    method: req.method,
+    url: req.originalUrl,
+    ip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.connection?.remoteAddress || 'Unknown'
+  });
+  next();
+});
 
 // In-memory persistence store (for demo purposes)
 const sessionStore = {};
@@ -32,6 +57,7 @@ const e = Buffer.from(forgeKey.e.toByteArray()).toString("base64url");
 
 // Serve JWKS endpoint correctly
 app.get("/.well-known/jwks.json", (req, res) => {
+  logger.info('Serving JWKS endpoint');
   res.json({
     keys: [
       {
@@ -45,41 +71,73 @@ app.get("/.well-known/jwks.json", (req, res) => {
     ],
   });
 });
+
 /**
  * Compute a device fingerprint based on IP and User-Agent.
- * In a real system, you might include additional factors.
  */
-function computeDeviceFingerprint(context) {
-  // Combine the values into one string
-  const fingerprintData = context.ip + context.userAgent + context.accept + context.acceptLanguage;
+function computeDeviceFingerprint(context, secretKey = null) {
+  try {
+    // Validate required context properties.
+    if (!context || !context.ip || !context.userAgent) {
+      throw new Error("Missing required context fields: ip and userAgent");
+    }
 
-  // Compute a SHA-256 hash of the combined string to use as the fingerprint
-  return crypto.createHash('sha256').update(fingerprintData).digest('hex');
+    // Build a structured fingerprint object.
+    const fingerprintComponents = {
+      ip: context.ip,
+      userAgent: context.userAgent
+      // Optionally add other stable properties like screen resolution or timezone.
+    };
+
+    // Canonicalize the data using JSON.stringify.
+    const fingerprintData = JSON.stringify(fingerprintComponents);
+    logger.debug("Fingerprint data prepared", { fingerprintData });
+
+    let fingerprint;
+
+    // Use HMAC with a secret key if provided for extra security.
+    if (secretKey) {
+      fingerprint = crypto
+        .createHmac("sha256", secretKey)
+        .update(fingerprintData)
+        .digest("hex");
+      logger.debug("Computed fingerprint using HMAC", { fingerprint });
+    } else {
+      fingerprint = crypto
+        .createHash("sha256")
+        .update(fingerprintData)
+        .digest("hex");
+      logger.debug("Computed fingerprint using SHA-256", { fingerprint });
+    }
+
+    // Log at info level the final fingerprint.
+    logger.info("DeviceFingerprint computed", { fingerprint });
+    return fingerprint;
+  } catch (error) {
+    logger.error("Error computing device fingerprint", { error });
+    throw error;
+  }
 }
+
 
 /**
  * Dummy check: determines if the access token is expired.
- * Replace with real expiration logic.
  */
 function isAccessTokenExpired(session) {
-  // For demo: treat token value "expired" as expired.
-  return session.AccessToken === 'expired';
+  return session.AccessToken === "expired";
 }
 
 /**
  * Dummy check: determines if the refresh token is valid.
  */
 function isRefreshTokenValid(session) {
-  return session.RefreshToken && session.RefreshToken !== 'invalid';
+  return session.RefreshToken && session.RefreshToken !== "invalid";
 }
 
 /**
  * Dummy function to build a JWT from session details.
- * Replace with actual JWT creation and signing.
  */
 function buildStaplesJWT(session) {
-  // For demo, return a simple token string.
-
   return jwt.sign(session, privateKey, {
     algorithm: "RS256",
     expiresIn: "1h",
@@ -89,145 +147,111 @@ function buildStaplesJWT(session) {
 
 /**
  * /advice endpoint: Called by NGINX with full HTTP request context.
- * It inspects the request, computes a device fingerprint,
- * and checks if a valid session exists via COOKIE_STAPLES_SESSION.
  */
-app.post('/advice', async (req, res) => {
+app.post("/advice", async (req, res) => {
+  const correlationId = req.correlationId;
   try {
-    console.log("Received request at /advice");
+    logger.info("Received request at /advice", { correlationId });
 
-    // context = {
-    //   method: req.method,
-    //   url: req.originalUrl,
-    //   headers: req.headers,
-    //   body: req.body,
-    //   query: req.query,
-    //   params: req.params,
-    //   // Convert cookies to a string format (if needed)
-    //   cookies: req.cookies ? Object.entries(req.cookies).map(([key, value]) => `${key}=${value}`).join('; ') : '',
-    //   ip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.connection?.remoteAddress || 'Unknown',
-    //   userAgent: req.get('User-Agent') || '',
-    //   accept: req.get('Accept') || '',
-    //   acceptLanguage: req.get('Accept-Language') || ''
-    // };
-
+    // Using req.body as the context.
     const context = req.body;
-
-    console.log('Context:', JSON.stringify(context, null, 2));
-
+    logger.info("Context received", { correlationId, context });
 
     // Step 1: Compute device fingerprint
     const deviceId = computeDeviceFingerprint(context);
-    console.log(`Computed Device Fingerprint: ${deviceId}`);
+    logger.info("Computed Device Fingerprint", { correlationId, deviceId });
 
-    let sessionUUID = context.cookies['COOKIE_STAPLES_SESSION'];
-
+    let sessionUUID = context.cookies && context.cookies["COOKIE_STAPLES_SESSION"];
     if (sessionUUID) {
-      console.log(`Found: COOKIE_STAPLES_SESSION: ${sessionUUID}`);
+      logger.info("Found COOKIE_STAPLES_SESSION", { correlationId, sessionUUID });
     } else {
-      console.log("Not Found: COOKIE_STAPLES_SESSION");
+      logger.info("COOKIE_STAPLES_SESSION not found", { correlationId });
     }
 
     let session = sessionUUID ? sessionStore[sessionUUID] : null;
     const contextUrl = new URL(context.url);
 
     if (session) {
-      console.log(`Session found for UUID: ${sessionUUID}`);
-      // Step 3: Validate session fingerprint
+      logger.info("Session found", { correlationId, sessionUUID });
       if (session.FingerPrint !== deviceId) {
-        console.warn(`Fingerprint mismatch! Possible session hijacking for UUID: ${sessionUUID}`);
-        session = null; // Invalidate session to force re-authentication
-      }
-      else if (contextUrl.searchParams.has('code') && contextUrl.pathname.endsWith('/callback')) {
-        console.log("Code recived");
-
+        logger.warn("Fingerprint mismatch! Possible session hijacking", { correlationId, sessionUUID });
+        session = null;
+      } else if (contextUrl.searchParams.has("code") && contextUrl.pathname.endsWith("/callback")) {
+        logger.info("Authorization code received", { correlationId });
         const data = qs.stringify({
-          grant_type: 'authorization_code',
-          code: contextUrl.searchParams.get('code'),
+          grant_type: "authorization_code",
+          code: contextUrl.searchParams.get("code"),
           client_id: config.idaasClientID,
           client_secret: config.idaasClientSecret,
           redirect_uri: config.appCallbackEnpoint,
         });
 
         const tokenConfig = {
-          method: 'post',
+          method: "post",
           maxBodyLength: Infinity,
           url: config.idaasAccessTokenEndpoint,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
           data,
         };
 
         try {
           const idaasResponse = await axios.request(tokenConfig);
-
-          console.log("IDAAS Response:", idaasResponse.data);
+          logger.info("IDAAS token exchange successful", { correlationId, response: idaasResponse.data });
 
           session.AccessToken = idaasResponse.data.access_token;
           session.IdToken = idaasResponse.data.id_token;
           session.RefreshToken = idaasResponse.data.refresh_token;
           session.FingerPrint = deviceId;
-          console.log(`Session updated after token exchange:\n`, JSON.stringify(session, null, 2));
-
           if (idaasResponse.data.rememberMe) session.rememberMe = true;
 
+          logger.info("Session updated after token exchange", { correlationId, session });
           const staplesJWT = buildStaplesJWT(session);
-
-          console.log(`Created staplesJWT: ${staplesJWT}`);
-
+          logger.info("Created staplesJWT", { correlationId, staplesJWT });
           return res.json({ adviceHeaders: { HTTP_STAPLES_JWT: staplesJWT } });
         } catch (error) {
-          console.log(`Error exchanging token for session ${sessionUUID}: ${error.message}`);
+          logger.error("Error exchanging token", { correlationId, sessionUUID, error: error.message });
           return res.status(500).json({ error: error.message });
         }
-      }
-      else if (isAccessTokenExpired(session)) {
-        console.log(`Access token expired for UUID: ${sessionUUID}`);
-
-        // Step 4: Attempt token renewal if refresh token is valid
+      } else if (isAccessTokenExpired(session)) {
+        logger.info("Access token expired", { correlationId, sessionUUID });
         if (isRefreshTokenValid(session)) {
           try {
-            console.log(`Refreshing access token for UUID: ${sessionUUID}`);
+            logger.info("Attempting to refresh access token", { correlationId, sessionUUID });
             const idaasResponse = await axios.post(config.idaasRenewUrl, {
-              refreshToken: session.RefreshToken
+              refreshToken: session.RefreshToken,
             });
-
             session.AccessToken = idaasResponse.data.access_token;
             session.IdToken = idaasResponse.data.id_token;
             session.RefreshToken = idaasResponse.data.refresh_token;
-            session.FingerPrint = deviceId; // Update fingerprint after successful refresh
-
-            console.log(`Access token refreshed successfully:\n`, JSON.stringify(session, null, 2));
+            session.FingerPrint = deviceId;
+            logger.info("Access token refreshed successfully", { correlationId, session });
           } catch (err) {
-            console.error(`Error refreshing token for UUID: ${sessionUUID}`, err.message);
-            session = null; // Force re-authentication on failure
+            logger.error("Error refreshing token", { correlationId, sessionUUID, error: err.message });
+            session = null;
           }
         } else {
-          console.warn(`Refresh token invalid for UUID: ${sessionUUID}, requiring re-authentication.`);
-          session = null; // Force re-authentication
+          logger.warn("Refresh token invalid, requiring re-authentication", { correlationId, sessionUUID });
+          session = null;
         }
       }
     } else {
-      console.log("No valid session found, initiating authentication flow.");
+      logger.info("No valid session found, initiating authentication flow", { correlationId });
     }
 
-    // Step 5: Generate response headers for NGINX
+    // Step 5: Generate response headers for NGINX.
     let adviceHeaders = {};
-
     if (session && session.AccessToken) {
-      console.log(`Valid session found for UUID: ${sessionUUID}. Generating JWT.`);
-
-      // Build Staples JWT
+      logger.info("Valid session found; generating JWT", { correlationId, sessionUUID });
       let staplesJWT = buildStaplesJWT(session);
       if (session.rememberMe) {
+        // Optionally add additional information if needed.
         staplesJWT.remember_me = true;
       }
-
       adviceHeaders = {
-        HTTP_STAPLES_JWT: staplesJWT.token,
-        HTTP_STAPLES_UUID: sessionUUID
+        HTTP_STAPLES_JWT: staplesJWT.token || staplesJWT, // Adjust according to your JWT structure
+        HTTP_STAPLES_UUID: sessionUUID,
       };
     } else {
-      // No valid session -> Start new authentication flow
       sessionUUID = uuidv4();
       const state = uuidv4();
       const nonce = uuidv4();
@@ -238,12 +262,10 @@ app.post('/advice', async (req, res) => {
         IdToken: null,
         RefreshToken: null,
         FingerPrint: deviceId,
-        nonce: nonce // Store nonce for validation later
+        nonce: nonce,
       };
 
-      console.log(`New authentication flow initiated. Generated UUID: ${sessionUUID}`);
-
-      // Build IDAAS authentication URL
+      logger.info("Initiating new authentication flow", { correlationId, sessionUUID });
       const authParams = new URLSearchParams({
         client_id: config.idaasClientID,
         redirect_uri: config.appCallbackEnpoint,
@@ -251,29 +273,25 @@ app.post('/advice', async (req, res) => {
         response_type: config.response_type,
         state: state,
         nonce: nonce,
-        acr_values: config.acrValues
+        acr_values: config.acrValues,
       });
-
       const authnUrl = `${config.idaasAuthorizeEndpoint}?${authParams.toString()}`;
-      console.log(`Generated authentication URL: ${authnUrl}`);
+      logger.info("Generated authentication URL", { correlationId, authnUrl });
 
       adviceHeaders = {
         HTTP_STAPLES_AUTHN_URL: authnUrl,
-        HTTP_STAPLES_UUID: sessionUUID
+        HTTP_STAPLES_UUID: sessionUUID,
       };
     }
 
-    // Step 6: Send response to NGINX
-    console.log("Sending response headers to NGINX:", adviceHeaders);
+    logger.info("Sending response headers to NGINX", { correlationId, adviceHeaders });
     res.json({ adviceHeaders });
-
   } catch (error) {
-    console.error('Error in /advice:', error.message);
-    res.status(500).json({ error: 'Internal Server Error' });
+    logger.error("Error in /advice endpoint", { correlationId, error: error.message, stack: error.stack });
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-
-app.listen(config.port, '0.0.0.0', () => {
-  console.log(`Auth service listening on port ${config.port}`);
+app.listen(config.port, "0.0.0.0", () => {
+  logger.info(`Auth service listening on port ${config.port}`);
 });
