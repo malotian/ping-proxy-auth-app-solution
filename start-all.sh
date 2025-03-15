@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Define directories for applications
+# directories for applications
 AUTH_DIR="./auth"
 PROXY_DIR="./proxy"
 APP_DIR="./app"
