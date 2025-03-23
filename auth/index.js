@@ -15,12 +15,11 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
-// Create a Winston logger with timestamp and structured output.
+// Logger setup
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || "info",
   format: winston.format.combine(
     winston.format.timestamp(),
-    // Custom format: [timestamp] [LEVEL] message {optional meta}
     winston.format.printf(({ level, message, timestamp, ...meta }) => {
       return `${timestamp} [${level.toUpperCase()}] ${message}${
         Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
@@ -30,7 +29,7 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
-// Middleware to attach a unique correlationId from the proxy header (or default).
+// Attach correlationId
 app.use((req, res, next) => {
   req.correlationId = req.headers["proxy-correlation-id"] || "N/A";
   logger.info("Incoming request", {
@@ -45,22 +44,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// In-memory persistence store (for demo purposes)
+// In-memory store (demo only)
 const sessionStore = {};
 
-// Generate RSA Key Pair
+// RSA Key Pair and JWKS
 const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   publicKeyEncoding: { type: "spki", format: "pem" },
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
 });
-
-// Convert Public Key to JWKS Format
 const forgeKey = forge.pki.publicKeyFromPem(publicKey);
 const n = Buffer.from(forgeKey.n.toByteArray()).toString("base64url");
 const e = Buffer.from(forgeKey.e.toByteArray()).toString("base64url");
 
-// Serve JWKS endpoint correctly
 app.get("/.well-known/jwks.json", (req, res) => {
   logger.info("Serving JWKS endpoint");
   res.json({
@@ -77,274 +73,237 @@ app.get("/.well-known/jwks.json", (req, res) => {
   });
 });
 
-/**
- * Compute a device fingerprint based on IP and User-Agent.
- */
+// Device fingerprint function
 function computeDeviceFingerprint(context, secretKey = null) {
-  try {
-    // Validate required context properties.
-    if (!context || !context.ip || !context.userAgent) {
-      throw new Error("Missing required context fields: ip and userAgent");
-    }
-
-    // Build a structured fingerprint object.
-    const fingerprintComponents = {
-      ip: context.ip,
-      userAgent: context.userAgent,
-      // Optionally add other stable properties like screen resolution or timezone.
-    };
-
-    // Canonicalize the data using JSON.stringify.
-    const fingerprintData = JSON.stringify(fingerprintComponents);
-    logger.debug("Fingerprint data prepared", { fingerprintData });
-
-    let fingerprint;
-
-    // Use HMAC with a secret key if provided for extra security.
-    if (secretKey) {
-      fingerprint = crypto
-        .createHmac("sha256", secretKey)
-        .update(fingerprintData)
-        .digest("hex");
-      logger.debug("Computed fingerprint using HMAC", { fingerprint });
-    } else {
-      fingerprint = crypto
-        .createHash("sha256")
-        .update(fingerprintData)
-        .digest("hex");
-      logger.debug("Computed fingerprint using SHA-256", { fingerprint });
-    }
-
-    // Log at info level the final fingerprint.
-    logger.info("DeviceFingerprint computed", { fingerprint });
-    return fingerprint;
-  } catch (error) {
-    logger.error("Error computing device fingerprint", { error });
-    throw error;
+  if (!context || !context.ip || !context.userAgent) {
+    throw new Error("Missing required context fields: ip and userAgent");
   }
+
+  const fingerprintComponents = {
+    ip: context.ip,
+    userAgent: context.userAgent,
+  };
+
+  const fingerprintData = JSON.stringify(fingerprintComponents);
+  let fingerprint;
+
+  if (secretKey) {
+    fingerprint = crypto
+      .createHmac("sha256", secretKey)
+      .update(fingerprintData)
+      .digest("hex");
+  } else {
+    fingerprint = crypto
+      .createHash("sha256")
+      .update(fingerprintData)
+      .digest("hex");
+  }
+
+  logger.info("DeviceFingerprint computed", { fingerprint });
+  return fingerprint;
 }
 
-/**
- * Dummy check: determines if the access token is expired.
- */
 function isAccessTokenExpired(session) {
   return session.AccessToken === "expired";
 }
 
-/**
- * Dummy check: determines if the refresh token is valid.
- */
 function isRefreshTokenValid(session) {
   return session.RefreshToken && session.RefreshToken !== "invalid";
 }
 
-/**
- * Dummy function to build a JWT from session details.
- */
 function buildStaplesJWT(session) {
-  return jwt.sign(session, privateKey, {
+  const payload = {
+    AccessToken: session.AccessToken,
+    IdToken: session.IdToken,
+    SessionID: session.SessionID,
+    RememberMe: session.RememberMe || false, // ✅ INCLUDED AS PER SPEC
+  };
+
+  return jwt.sign(payload, privateKey, {
     algorithm: "RS256",
     expiresIn: "1h",
-    keyid: "staples-kid", // Ensure keyid matches JWKS kid
+    keyid: "staples-kid",
   });
 }
 
-/**
- * /advice endpoint: Called by NGINX with full HTTP request context.
- */
 app.post("/advice", async (req, res) => {
   const correlationId = req.correlationId;
+
   try {
-    logger.info("Received request at /advice", { correlationId });
-
-    // Using req.body as the context.
     const context = req.body;
-    logger.info("Context received", { correlationId, context });
+    logger.info("Received /advice request", { correlationId, context });
 
-    // Step 1: Compute device fingerprint
     const deviceId = computeDeviceFingerprint(context);
-    logger.info("Computed Device Fingerprint", { correlationId, deviceId });
-
-    let staplesSessionId =
-      context.cookies && context.cookies["COOKIE_STAPLES_SESSION"];
-    if (staplesSessionId) {
-      logger.info("Found COOKIE_STAPLES_SESSION", {
-        correlationId,
-        staplesSessionId,
-      });
-    } else {
-      logger.info("COOKIE_STAPLES_SESSION not found", { correlationId });
-    }
-
-    let session = staplesSessionId ? sessionStore[staplesSessionId] : null;
     const contextUrl = new URL(context.url);
+    const cookies = context.cookies || {};
+    const cookieSessionValue = cookies["COOKIE_STAPLES_SESSION"];
 
-    if (session) {
-      logger.info("Session found", { correlationId, staplesSessionId });
-      if (session.FingerPrint !== deviceId) {
-        logger.warn("Fingerprint mismatch! Possible session hijacking", {
+    const isCallbackRequest =
+      contextUrl.pathname.endsWith("/callback") &&
+      contextUrl.searchParams.has("code");
+
+    let session = null;
+
+    if (isCallbackRequest) {
+      // CASE: Callback from Ping with JSON-formatted cookie
+      let parsed;
+      try {
+        parsed = JSON.parse(cookieSessionValue);
+      } catch (e) {
+        logger.warn("Invalid COOKIE_STAPLES_SESSION format in callback", {
           correlationId,
-          staplesSessionId,
+          error: e.message,
         });
-        session = null;
-      } else if (
-        contextUrl.searchParams.has("code") &&
-        contextUrl.pathname.endsWith("/callback")
-      ) {
-        logger.info("Authorization code received", { correlationId });
-        const data = qs.stringify({
-          grant_type: "authorization_code",
-          code: contextUrl.searchParams.get("code"),
-          client_id: config.idaasClientID,
-          client_secret: config.idaasClientSecret,
-          redirect_uri: config.appCallbackEnpoint,
-        });
+        return res.status(400).json({ error: "Invalid session cookie format" });
+      }
 
-        const tokenConfig = {
-          method: "post",
-          maxBodyLength: Infinity,
-          url: config.idaasAccessTokenEndpoint,
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          data,
+      const { StateID, NonceID, FingerPrint: cookieFingerprint } = parsed;
+
+      logger.info("Parsed COOKIE_STAPLES_SESSION (callback)", {
+        correlationId,
+        StateID,
+        NonceID,
+        cookieFingerprint,
+      });
+
+      if (cookieFingerprint !== deviceId) {
+        logger.warn("Fingerprint mismatch during callback", { correlationId });
+        return res.status(401).json({ error: "Fingerprint mismatch. Re-authenticate required." });
+      }
+
+      try {
+        const tokenResponse = await axios.post(
+          config.idaasAccessTokenEndpoint,
+          qs.stringify({
+            grant_type: "authorization_code",
+            code: contextUrl.searchParams.get("code"),
+            client_id: config.idaasClientID,
+            client_secret: config.idaasClientSecret,
+            redirect_uri: config.appCallbackEnpoint,
+          }),
+          { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+        );
+
+        const newSessionId = uuidv4();
+
+        session = {
+          SessionID: newSessionId,
+          AccessToken: tokenResponse.data.access_token,
+          IdToken: tokenResponse.data.id_token,
+          RefreshToken: tokenResponse.data.refresh_token,
+          FingerPrint: deviceId,
+          RememberMe: tokenResponse.data.remember_me || false,
+          StateID,
+          NonceID,
         };
 
-        try {
-          const idaasResponse = await axios.request(tokenConfig);
-          logger.info("IDAAS token exchange successful", {
-            correlationId,
-            response: idaasResponse.data,
-          });
+        sessionStore[newSessionId] = session;
 
-          session.AccessToken = idaasResponse.data.access_token;
-          session.IdToken = idaasResponse.data.id_token;
-          session.RefreshToken = idaasResponse.data.refresh_token;
-          session.FingerPrint = deviceId;
-          if (idaasResponse.data.rememberMe) session.rememberMe = true;
+        const jwtToken = buildStaplesJWT(session);
 
-          logger.info("Session updated after token exchange", {
-            correlationId,
-            session,
-          });
-          const staplesJWT = buildStaplesJWT(session);
-          logger.info("Created staplesJWT", { correlationId, staplesJWT });
-          return res.json({ adviceHeaders: { HTTP_STAPLES_JWT: staplesJWT } });
-        } catch (error) {
-          logger.error("Error exchanging token", {
-            correlationId,
-            staplesSessionId,
-            error: error.message,
-          });
-          return res.status(500).json({ error: error.message });
-        }
-      } else if (isAccessTokenExpired(session)) {
-        logger.info("Access token expired", { correlationId, staplesSessionId });
-        if (isRefreshTokenValid(session)) {
-          try {
-            logger.info("Attempting to refresh access token", {
-              correlationId,
-              staplesSessionId,
-            });
-            const idaasResponse = await axios.post(config.idaasRenewUrl, {
-              refreshToken: session.RefreshToken,
-            });
-            session.AccessToken = idaasResponse.data.access_token;
-            session.IdToken = idaasResponse.data.id_token;
-            session.RefreshToken = idaasResponse.data.refresh_token;
-            session.FingerPrint = deviceId;
-            logger.info("Access token refreshed successfully", {
-              correlationId,
-              session,
-            });
-          } catch (err) {
-            logger.error("Error refreshing token", {
-              correlationId,
-              staplesSessionId,
-              error: err.message,
-            });
+        return res.json({
+          adviceHeaders: {
+            HTTP_STAPLES_JWT: jwtToken,
+            HTTP_STAPLES_COOKIE_VALUE: newSessionId,
+          },
+        });
+      } catch (error) {
+        logger.error("Token exchange failed", {
+          correlationId,
+          error: error.message,
+        });
+        return res.status(500).json({ error: "Token exchange failed" });
+      }
+    }
+
+    // Non-callback flow — treat cookie as UUID for session lookup
+    if (cookieSessionValue) {
+      const sessionId = cookieSessionValue;
+      session = sessionStore[sessionId];
+
+      if (session) {
+        if (session.FingerPrint !== deviceId) {
+          logger.warn("Fingerprint mismatch", { correlationId });
+          session = null;
+        } else if (isAccessTokenExpired(session)) {
+          if (isRefreshTokenValid(session)) {
+            try {
+              const refreshResponse = await axios.post(config.idaasRenewUrl, {
+                refreshToken: session.RefreshToken,
+              });
+
+              session.AccessToken = refreshResponse.data.access_token;
+              session.IdToken = refreshResponse.data.id_token;
+              session.RefreshToken = refreshResponse.data.refresh_token;
+              session.RememberMe = refreshResponse.data.remember_me || false;
+              session.FingerPrint = deviceId;
+
+              logger.info("Session refreshed", { correlationId });
+            } catch (err) {
+              logger.error("Token refresh failed", {
+                correlationId,
+                error: err.message,
+              });
+              session = null;
+            }
+          } else {
+            logger.warn("Invalid refresh token", { correlationId });
             session = null;
           }
-        } else {
-          logger.warn("Refresh token invalid, requiring re-authentication", {
-            correlationId,
-            staplesSessionId,
-          });
-          session = null;
         }
       }
-    } else {
-      logger.info("No valid session found, initiating authentication flow", {
-        correlationId,
-      });
     }
 
-    // Step 5: Generate response headers for NGINX.
-    let adviceHeaders = {};
+    // If session is valid and AccessToken exists, issue JWT
     if (session && session.AccessToken) {
-      logger.info("Valid session found; generating JWT", {
-        correlationId,
-        staplesSessionId,
+      const jwtToken = buildStaplesJWT(session);
+      return res.json({
+        adviceHeaders: {
+          HTTP_STAPLES_JWT: jwtToken,
+          HTTP_STAPLES_COOKIE_VALUE: session.SessionID,
+        },
       });
-      let staplesJWT = buildStaplesJWT(session);
-      if (session.rememberMe) {
-        // Optionally add additional information if needed.
-        staplesJWT.remember_me = true;
-      }
-      adviceHeaders = {
-        HTTP_STAPLES_JWT: staplesJWT.token || staplesJWT, // Adjust according to your JWT structure
-        HTTP_STAPLES_UUID: staplesSessionId,
-      };
-    } else {
-      staplesSessionId = uuidv4();
-      const state = uuidv4();
-      const nonce = uuidv4();
-
-      sessionStore[staplesSessionId] = {
-        staplesSessionId: staplesSessionId,
-        AccessToken: null,
-        IdToken: null,
-        RefreshToken: null,
-        FingerPrint: deviceId,
-        nonce: nonce,
-      };
-
-      logger.info("Initiating new authentication flow", {
-        correlationId,
-        staplesSessionId,
-      });
-      const authParams = new URLSearchParams({
-        client_id: config.idaasClientID,
-        redirect_uri: config.appCallbackEnpoint,
-        scope: config.scope,
-        response_type: config.response_type,
-        state: state,
-        nonce: nonce,
-        acr_values: config.acrValues,
-      });
-      const authnUrl = `${
-        config.idaasAuthorizeEndpoint
-      }?${authParams.toString()}`;
-      logger.info("Generated authentication URL", { correlationId, authnUrl });
-
-      adviceHeaders = {
-        HTTP_STAPLES_AUTHN_URL: authnUrl,
-        HTTP_STAPLES_UUID: staplesSessionId,
-      };
     }
 
-    logger.info("Sending response headers to NGINX", {
-      correlationId,
-      adviceHeaders,
+    // No valid session — initiate authentication (no sessionStore write)
+    const stateId = uuidv4();
+    const nonceId = uuidv4();
+
+    const sessionCookiePayload = {
+      StateID: stateId,
+      NonceID: nonceId,
+      FingerPrint: deviceId,
+    };
+
+    const authnParams = new URLSearchParams({
+      client_id: config.idaasClientID,
+      redirect_uri: config.appCallbackEnpoint,
+      scope: config.scope,
+      response_type: config.response_type,
+      state: stateId,
+      nonce: nonceId,
+      acr_values: config.acrValues,
     });
-    res.json({ adviceHeaders });
-  } catch (error) {
-    logger.error("Error in /advice endpoint", {
+
+    const authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParams.toString()}`;
+
+    return res.json({
+      adviceHeaders: {
+        HTTP_STAPLES_AUTHN_URL: authnUrl,
+        HTTP_STAPLES_COOKIE_VALUE: JSON.stringify(sessionCookiePayload),
+      },
+    });
+  } catch (err) {
+    logger.error("Error in /advice", {
       correlationId,
-      error: error.message,
-      stack: error.stack,
+      error: err.message,
+      stack: err.stack,
     });
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+
 
 app.listen(config.port, "0.0.0.0", () => {
   logger.info(`Auth service listening on port ${config.port}`);
