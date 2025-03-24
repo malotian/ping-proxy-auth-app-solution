@@ -109,7 +109,7 @@ app.get("/login", (req, res) => {
 
       // Forward the request to downstream TierB via Zuul.
       logger.info("Forwarding validated JWT to downstream TierB via Zuul", { correlationId });
-      return forwardToZuul(staplesJwtToken, correlationId, res);
+      return res.json(decodeStaplesJwt(staplesJwtToken, correlationId));
     });
     return;
   }
@@ -155,10 +155,8 @@ app.get("/callback", async (req, res) => {
         cookieOptions,
       });
 
-      return res.json({
-        message: "Token validation successful in /callback",
-        staplesJwtToken: decoded,
-      });
+      return res.json(decodeStaplesJwt(staplesJwtToken, correlationId));
+
     });
   } catch (error) {
     logger.error("Error processing /callback", { correlationId, error: error.message });
@@ -166,26 +164,39 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Forward JWT to downstream TierB via Zuul
-function forwardToZuul(jwtToken, correlationId, res) {
-  logger.debug("Initiating forwarding of JWT to downstream TierB via Zuul", { correlationId, tierBUrl: config.tierBUrl });
-  axios.get(config.tierBUrl, { headers: { Authorization: `Bearer ${jwtToken}` } })
-    .then((zuulResponse) => {
-      logger.info("Downstream access granted via Zuul", {
-        correlationId,
-        status: zuulResponse.status,
-        data: zuulResponse.data,
-      });
-      res.json({ message: "Access granted via Zuul", data: zuulResponse.data });
-    })
-    .catch((err) => {
-      logger.error("Downstream access denied via Zuul", {
-        correlationId,
-        error: err.message,
-        response: err.response ? err.response.data : null,
-      });
-      res.status(403).json({ error: "Access denied" });
-    });
+function decodeStaplesJwt(jwtToken, correlationId) {
+  // Decode the outer JWT token with full details (header, payload, signature)
+  const decodedOuter = jwt.decode(jwtToken, { complete: true });
+  
+  if (!decodedOuter) {
+    logger.error("Failed to decode outer JWT", { correlationId });
+    return { error: "Invalid outer JWT token" };
+  }
+
+  // Decode nested tokens if present
+  let decodedAccess = null;
+  if (decodedOuter.payload && decodedOuter.payload.AccessToken) {
+    decodedAccess = jwt.decode(decodedOuter.payload.AccessToken, { complete: true });
+  }
+  
+  let decodedId = null;
+  if (decodedOuter.payload && decodedOuter.payload.IdToken) {
+    decodedId = jwt.decode(decodedOuter.payload.IdToken, { complete: true });
+  }
+
+  logger.info("Decoded JWT token with nested tokens", {
+    correlationId,
+    outerToken: decodedOuter,
+    accessToken: decodedAccess,
+    idToken: decodedId,
+  });
+
+  return {
+    message: "Decoded JWT Token",
+    StaplesJWT: decodedOuter,
+    AccessTokenDecoded: decodedAccess,
+    IdTokenDecoded: decodedId,
+  };
 }
 
 // Start the TierA service with detailed startup logging
