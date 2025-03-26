@@ -8,6 +8,8 @@ module.exports = {
   idaasAccessTokenEndpoint: process.env.PING_RENEW_URL || 'https://openam-simeio2-demo.forgeblocks.com:443/am/oauth2/bravo/access_token',
   idaasClientID: 'staples_tier_a_app_client_id',
   idaasClientSecret: 'staples_tier_a_app_client_secret',
+  idaasRememberClientID: 'staples_tier_a_app_actor_client_id',
+  idaasRememberClientSecret: 'staples_tier_a_app_actor_client_secret',
   appCallbackEnpoint: 'http://app.lab.com:3000/callback',
   acrValues: 'staples_tier_a_acr',
   scope: 'openid',

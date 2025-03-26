@@ -109,6 +109,7 @@ function buildStaplesJWT(session) {
     AccessToken: session.AccessToken,
     IdToken: session.IdToken,
     SessionID: session.SessionID,
+    RefreshToken: session.RefreshToken,
     RememberMe: session.RememberMe || false, // Add RememberMe claim as per spec
   };
 
@@ -183,20 +184,40 @@ app.post("/advice", async (req, res) => {
             }),
             { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
           );
-          logger.info("Token exchange successful", { correlationId, tokenResponseData: tokenResponse.data });
-          
+          logger.info("Token exchange successful", { correlationId, tokenResponse: tokenResponse.data });
+          let finalTokenResponse = tokenResponse;
+
+          // If remember_me flag is true, make an additional token exchange call
+          if (tokenResponse.data.remember_me) {
+            tokenResponseRememberMe = await axios.post(
+              config.idaasAccessTokenEndpoint,
+              qs.stringify({
+                grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                scope: "transfer openid",
+                client_id: config.idaasRememberClientID,
+                client_secret: config.idaasRememberClientSecret,
+                subject_token: tokenResponse.data.access_token,
+                subject_token_type: "urn:ietf:params:oauth:token-type:access_token"
+              }),
+              { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+            );
+            logger.info("Token exchange (remember_me) successful", {correlationId, tokenResponseRememberMe: tokenResponseRememberMe.data});
+            finalTokenResponse = tokenResponseRememberMe;
+          }
+
           // Generate new SessionID and update session store (PersistenceStore)
           const newSessionId = uuidv4();
           session = {
             SessionID: newSessionId,
-            AccessToken: tokenResponse.data.access_token,
-            IdToken: tokenResponse.data.id_token,
-            RefreshToken: tokenResponse.data.refresh_token,
+            AccessToken: finalTokenResponse.data.access_token,
+            IdToken: finalTokenResponse.data.id_token,
+            RefreshToken: finalTokenResponse.data.refresh_token,
             FingerPrint: deviceId,
-            RememberMe: tokenResponse.data.remember_me || false,
+            RememberMe: finalTokenResponse.data.remember_me || false,
             StateID,
             NonceID,
           };
+
           sessionStore[newSessionId] = session;
           logger.info("Session record updated in PersistenceStore", { correlationId, SessionID: newSessionId, session });
 

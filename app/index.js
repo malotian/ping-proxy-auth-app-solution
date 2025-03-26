@@ -184,11 +184,17 @@ function decodeStaplesJwt(jwtToken, correlationId) {
     decodedId = jwt.decode(decodedOuter.payload.IdToken, { complete: true });
   }
 
+  let decodedRefresh = null;
+  if (decodedOuter.payload && decodedOuter.payload.RefreshToken) {
+    decodedRefresh = jwt.decode(decodedOuter.payload.RefreshToken, { complete: true });
+  } 
+
   logger.info("Decoded JWT token with nested tokens", {
     correlationId,
     outerToken: decodedOuter,
     accessToken: decodedAccess,
     idToken: decodedId,
+    refershToken: decodedRefresh
   });
 
   return {
@@ -196,6 +202,7 @@ function decodeStaplesJwt(jwtToken, correlationId) {
     StaplesJWT: decodedOuter,
     AccessTokenDecoded: decodedAccess,
     IdTokenDecoded: decodedId,
+    RefreshTokenDecoded: decodedRefresh,
   };
 }
 
