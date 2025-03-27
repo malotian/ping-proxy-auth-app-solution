@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Decoded JWT Tokens - Multi-line Rows with Indentation Preserved</title>
+  <!-- Load Tabulator CSS from CDN -->
+  <link href="https://unpkg.com/tabulator-tables@5.5.0/dist/css/tabulator.min.css" rel="stylesheet">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    .token-section {
+      margin-bottom: 40px;
+    }
+    .token-section h2 {
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Decoded JWT Tokens - Multi-line with Indentation</h1>
+  
+  <!-- Containers for each token -->
+  <div class="token-section">
+    <h2>StaplesJWT</h2>
+    <div id="table-StaplesJWT"></div>
+  </div>
+  
+  <div class="token-section">
+    <h2>AccessTokenDecoded</h2>
+    <div id="table-AccessTokenDecoded"></div>
+  </div>
+  
+  <div class="token-section">
+    <h2>IdTokenDecoded</h2>
+    <div id="table-IdTokenDecoded"></div>
+  </div>
+  
+  <div class="token-section">
+    <h2>RefreshTokenDecoded</h2>
+    <div id="table-RefreshTokenDecoded"></div>
+  </div>
+  
+  <!-- Load Tabulator JS from CDN -->
+  <script src="https://unpkg.com/tabulator-tables@5.5.0/dist/js/tabulator.min.js"></script>
+  <script>
+    // Sample decoded JWT JSON data.
+    const decodedData = {
+      "StaplesJWT": {
+        "header": {
+          "alg": "RS256",
+          "typ": "JWT",
+          "kid": "staples-kid"
+        },
+        "payload": {
+          "AccessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+          "SessionID": "07fa56d9-43b0-474f-892b-4af1ef2f4cc1",
+          "RefreshToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+          "RememberMe": false,
+          "iat": 1743029727,
+          "exp": 1743033327
+        },
+        "signature": "mbyZ89UNu-V8BwXHFknb9kbqBqVi3gAYwxf6pq1TzY..."
+      },
+      "AccessTokenDecoded": {
+        "header": {
+          "typ": "JWT",
+          "alg": "HS256"
+        },
+        "payload": {
+          "sub": "hdhanjal",
+          "cts": "OAUTH2_STATELESS_GRANT",
+          "auth_level": 0,
+          "auditTrackingId": "4c2dc7ed-d572-4649-85f9-254f888a9ecf-74911",
+          "subname": "hdhanjal",
+          "iss": "https://openam-simeio2-demo.forgeblocks.com:443/am/oauth2/bravo",
+          "tokenName": "access_token",
+          "token_type": "Bearer",
+          "authGrantId": "jip7c361SgI2y9fx89hDDDtsePo",
+          "client_id": "staples_tier_a_app_actor_client_id",
+          "aud": "staples_tier_a_app_actor_client_id",
+          "nbf": 1743029727,
+          "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+          "scope": [
+            "transfer",
+            "openid"
+          ],
+          "auth_time": 1743029447,
+          "realm": "/bravo",
+          "exp": 1743033327,
+          "iat": 1743029727,
+          "expires_in": 3600,
+          "jti": "i_ImV2ZMTml_TJPtJZRMkm4WQNY"
+        },
+        "signature": "rtYUu10VV2aJjT_qWP6e1vOqJCuvNLZL-Dp4nyUeEWc"
+      },
+      "IdTokenDecoded": null,
+      "RefreshTokenDecoded": {
+        "header": {
+          "typ": "JWT",
+          "alg": "HS256"
+        },
+        "payload": {
+          "sub": "hdhanjal",
+          "cts": "OAUTH2_STATELESS_GRANT",
+          "auth_level": 0,
+          "auditTrackingId": "4c2dc7ed-d572-4649-85f9-254f888a9ecf-74912",
+          "subname": "hdhanjal",
+          "iss": "https://openam-simeio2-demo.forgeblocks.com:443/am/oauth2/bravo",
+          "tokenName": "refresh_token",
+          "token_type": "Bearer",
+          "authGrantId": "jip7c361SgI2y9fx89hDDDtsePo",
+          "client_id": "staples_tier_a_app_actor_client_id",
+          "aud": "staples_tier_a_app_actor_client_id",
+          "nbf": 1743029727,
+          "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+          "scope": [
+            "transfer",
+            "openid"
+          ],
+          "auth_time": 1743029447,
+          "realm": "/bravo",
+          "exp": 1758581727,
+          "iat": 1743029727,
+          "expires_in": 15552000,
+          "jti": "edDeiBQBzrw6UGntCQ0kMKxjoFc"
+        },
+        "signature": "BjEBDhHV76SQfLSuh5mKB6KkMoZeygTbfnMOdCyQ1OU"
+      }
+    };
+
+    // Helper function to transform a token object into an array of rows.
+    // Each row contains a property (shown once) and a single line of its value.
+    function createTokenRows(tokenObj) {
+      const rows = [];
+      Object.keys(tokenObj).forEach(property => {
+        let value = tokenObj[property];
+        // Convert objects to pretty JSON strings with indentation.
+        let valueStr = (typeof value === 'object' && value !== null) 
+                        ? JSON.stringify(value, null, 2) 
+                        : String(value);
+        // Split the string into lines.
+        const lines = valueStr.split('\n');
+        // First line: show property name.
+        rows.push({ part: property, line: lines[0] });
+        // For subsequent lines, leave property name blank.
+        for (let i = 1; i < lines.length; i++) {
+          rows.push({ part: "", line: lines[i] });
+        }
+      });
+      return rows;
+    }
+
+    // Initialize a Tabulator table for a given token.
+    function createTokenTable(tokenKey, containerId) {
+      const tokenData = decodedData[tokenKey];
+      if (!tokenData) {
+        document.getElementById(containerId).textContent = "No data available.";
+        return;
+      }
+      const tableRows = createTokenRows(tokenData);
+      new Tabulator("#" + containerId, {
+        data: tableRows,
+        layout: "fitColumns",
+        columns: [
+          { title: "Property", field: "part", width: 150 },
+          { 
+            title: "Value", 
+            field: "line", 
+            widthGrow: 2,
+            headerSort: false,
+            // Custom formatter to wrap the text in a <pre> tag preserving whitespace
+            formatter: function(cell) {
+              return `<pre style="margin:0; white-space: pre-wrap;">${cell.getValue()}</pre>`;
+            }
+          }
+        ]
+      });
+    }
+
+    // Create separate tables for each token.
+    createTokenTable("StaplesJWT", "table-StaplesJWT");
+    createTokenTable("AccessTokenDecoded", "table-AccessTokenDecoded");
+    createTokenTable("IdTokenDecoded", "table-IdTokenDecoded");
+    createTokenTable("RefreshTokenDecoded", "table-RefreshTokenDecoded");
+  </script>
+</body>
+</html>

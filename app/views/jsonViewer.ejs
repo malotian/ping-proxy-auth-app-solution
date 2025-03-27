@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://pfau-software.de/json-viewer/dist/iife/index.js"></script>
+  </head>
+  <body>
+    <andypf-json-viewer
+      indent="4"
+      expanded="3"
+      theme="google-light"
+      show-data-types="true"
+      show-toolbar="true"
+      expand-icon-type="square"
+      show-copy="true"
+      show-size="true"
+      ><%- JSON.stringify(inputData) %></andypf-json-viewer
+    >
+  </body>
+</html>

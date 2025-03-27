@@ -6,6 +6,8 @@ const { createProxyMiddleware } = require("http-proxy-middleware");
 const { v4: uuidv4 } = require("uuid");
 const config = require("./config");
 const winston = require("winston");
+const fs = require("fs");
+const https = require("https");
 
 const app = express();
 app.use(express.json());
@@ -156,6 +158,10 @@ app.use(
   })
 );
 
-app.listen(config.port, "0.0.0.0", () => {
-  logger.info(`Reverse proxy listening on port ${config.port}`);
+const key = fs.readFileSync(config.tlsKey);
+const cert = fs.readFileSync(config.tlsCert);
+
+https.createServer({ key, cert }, app).listen(config.port, "0.0.0.0", () => {
+  logger.info(`proxy running on port ${config.port}`);
 });
+
