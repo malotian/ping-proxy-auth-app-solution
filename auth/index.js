@@ -105,13 +105,7 @@ function isRefreshTokenValid(session) {
 
 // Function: Build StaplesJWT from session details
 function buildStaplesJWT(session) {
-  const payload = {
-    AccessToken: session.AccessToken,
-    IdToken: session.IdToken,
-    SessionID: session.SessionID,
-    RefreshToken: session.RefreshToken,
-    RememberMe: session.RememberMe || false, // Add RememberMe claim as per spec
-  };
+  const payload = session;
 
   logger.debug("Building StaplesJWT payload", { payload });
   const token = jwt.sign(payload, privateKey, {
@@ -189,7 +183,7 @@ app.post("/advice", async (req, res) => {
 
           // If remember_me flag is true, make an additional token exchange call
           if (tokenResponse.data.remember_me) {
-            tokenResponseRememberMe = await axios.post(
+            let tokenResponseRememberMe = await axios.post(
               config.idaasAccessTokenEndpoint,
               qs.stringify({
                 grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -202,7 +196,9 @@ app.post("/advice", async (req, res) => {
               { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
             );
             logger.info("Token exchange (remember_me) successful", {correlationId, tokenResponseRememberMe: tokenResponseRememberMe.data});
-            finalTokenResponse = tokenResponseRememberMe;
+            tokenResponseRememberMe.data.remember_me = true;
+            finalTokenResponse = tokenResponseRememberMe;;
+        
           }
 
           // Generate new SessionID and update session store (PersistenceStore)
@@ -216,6 +212,13 @@ app.post("/advice", async (req, res) => {
             RememberMe: finalTokenResponse.data.remember_me || false,
             StateID,
             NonceID,
+            ...(tokenResponse.data.remember_me
+              ? {
+                  OriginalAccessToken: tokenResponse.data.access_token,
+                  OriginalIdToken:    tokenResponse.data.id_token,
+                  OriginalRefreshToken: tokenResponse.data.refresh_token,
+                }
+              : {}),            
           };
 
           sessionStore[newSessionId] = session;
