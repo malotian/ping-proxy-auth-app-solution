@@ -42,6 +42,8 @@ app.use((req, res, next) => {
 const targets = {
   "app.lab.com:3000": config.mainAppUrl, // App application (TierA)
   "auth.lab.com:3000": config.authServiceTarget, // Auth service target
+  "localhost:3000": config.mainAppUrl, // App application (TierA)
+  "localhost:3000": config.authServiceTarget, // Auth service target
 };
 
 // Pre-proxy middleware: only for the app domain, fetch advice headers as per sequence diagram.

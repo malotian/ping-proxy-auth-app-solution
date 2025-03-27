@@ -162,9 +162,10 @@ app.get("/callback", async (req, res) => {
         cookieOptions,
       });
 
-      const decodedData = decodeStaplesJwt(staplesJwtToken, correlationId);
-      return res.render("decodedView", { decodedData });
-      //return res.json(decodeStaplesJwt(staplesJwtToken, correlationId));
+      //const decodedData = decodeStaplesJwt(staplesJwtToken, correlationId);
+      return res.render("jsonViewer", { inputData: parseJwt(staplesJwtToken, true) });
+      //return res.render("decodedView", { inputData: parseJwt(staplesJwtToken, true) });
+      //return res.json(parseJwt(staplesJwtToken, true));
 
     });
   } catch (error) {
@@ -173,48 +174,31 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-function decodeStaplesJwt(jwtToken, correlationId) {
-  // Decode the outer JWT token with full details (header, payload, signature)
-  const decodedOuter = jwt.decode(jwtToken, { complete: true });
-  
-  if (!decodedOuter) {
-    logger.error("Failed to decode outer JWT", { correlationId });
-    return { error: "Invalid outer JWT token" };
+const jwtRegex = /^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/;
+
+function parseJwt(input, recursive = true) {
+  // Use regex to check if input is a JWT string.
+  if (typeof input === "string" && jwtRegex.test(input)) {
+    const decoded = jwt.decode(input, { complete: true });
+    if (!decoded) {
+      throw new Error("Failed to decode token");
+    }
+    if (recursive && decoded.payload && typeof decoded.payload === "object") {
+      Object.keys(decoded.payload).forEach(key => {
+        if (typeof decoded.payload[key] === "string" && jwtRegex.test(decoded.payload[key])) {
+          decoded.payload[key] = parseJwt(decoded.payload[key], recursive);
+        }
+      });
+    }
+    return decoded;
   }
-
-  // Decode nested tokens if present
-  let decodedAccess = null;
-  if (decodedOuter.payload && decodedOuter.payload.AccessToken) {
-    decodedAccess = jwt.decode(decodedOuter.payload.AccessToken, { complete: true });
+  if (typeof input === "object" && input !== null) {
+    Object.keys(input).forEach(key => {
+      input[key] = parseJwt(input[key], recursive);
+    });
   }
-  
-  let decodedId = null;
-  if (decodedOuter.payload && decodedOuter.payload.IdToken) {
-    decodedId = jwt.decode(decodedOuter.payload.IdToken, { complete: true });
-  }
-
-  let decodedRefresh = null;
-  if (decodedOuter.payload && decodedOuter.payload.RefreshToken) {
-    decodedRefresh = jwt.decode(decodedOuter.payload.RefreshToken, { complete: true });
-  } 
-
-  logger.info("Decoded JWT token with nested tokens", {
-    correlationId,
-    outerToken: decodedOuter,
-    accessToken: decodedAccess,
-    idToken: decodedId,
-    refershToken: decodedRefresh
-  });
-
-  return {
-    message: "Decoded JWT Token",
-    StaplesJWT: decodedOuter,
-    AccessTokenDecoded: decodedAccess,
-    IdTokenDecoded: decodedId,
-    RefreshTokenDecoded: decodedRefresh,
-  };
+  return input;
 }
-
 // Start the TierA service with detailed startup logging
 app.listen(config.port, () => {
   logger.info(`app running on port ${config.port}`);
