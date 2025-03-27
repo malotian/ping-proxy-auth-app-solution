@@ -193,7 +193,7 @@ app.post("/advice", async (req, res) => {
               config.idaasAccessTokenEndpoint,
               qs.stringify({
                 grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-                scope: "transfer openid",
+                scope: "transfer",
                 client_id: config.idaasRememberClientID,
                 client_secret: config.idaasRememberClientSecret,
                 subject_token: tokenResponse.data.access_token,

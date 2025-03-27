@@ -6,10 +6,16 @@ const jwksClient = require("jwks-rsa");
 const axios = require("axios");
 const config = require("./config");
 const winston = require("winston");
+const path = require("path");
+
+
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
 
 // Enhanced verbose logging
 const logger = winston.createLogger({
@@ -24,6 +30,7 @@ const logger = winston.createLogger({
   ),
   transports: [new winston.transports.Console()],
 });
+
 
 // JWKS client setup for JWT signature validation
 const jwksUri = config.jwksUri;
@@ -155,7 +162,9 @@ app.get("/callback", async (req, res) => {
         cookieOptions,
       });
 
-      return res.json(decodeStaplesJwt(staplesJwtToken, correlationId));
+      const decodedData = decodeStaplesJwt(staplesJwtToken, correlationId);
+      return res.render("decodedView", { decodedData });
+      //return res.json(decodeStaplesJwt(staplesJwtToken, correlationId));
 
     });
   } catch (error) {
