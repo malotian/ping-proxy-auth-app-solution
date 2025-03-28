@@ -73,7 +73,7 @@ app.get("/.well-known/jwks.json", (req, res) => {
 });
 
 // Function: Compute device fingerprint based on IP and User-Agent
-function computeDeviceFingerprint(context, secretKey = null) {
+function computeDeviceFingerPrint(context, secretKey = null) {
   if (!context || !context.ip || !context.userAgent) {
     throw new Error("Missing required context fields: ip and userAgent");
   }
@@ -126,7 +126,7 @@ app.post("/advice", async (req, res) => {
     // Extract context from request body as passed from TierA/NGINX
     const context = req.body;
     // Compute device fingerprint (DeviceID)
-    const deviceId = computeDeviceFingerprint(context);
+    const deviceId = computeDeviceFingerPrint(context);
     logger.info("Device fingerprint computed", { correlationId, deviceId });
 
     // Extract URL and cookies from context for further processing
@@ -154,15 +154,16 @@ app.post("/advice", async (req, res) => {
           logger.warn("Failed to parse COOKIE_STAPLES_SESSION during callback", { correlationId, error: e.message });
           return res.status(400).json({ error: "Invalid session cookie format" });
         }
-        const { StateID, NonceID, FingerPrint: cookieFingerprint } = parsedCookie;
-        logger.info("Extracted StateID, NonceID, and FingerPrint from cookie", { correlationId, StateID, NonceID, cookieFingerprint });
+        const { StateID, NonceID, FingerPrint, TargetUrl} = parsedCookie;
+
+        logger.info("Extracted StateID, NonceID, and FingerPrint from cookie", { correlationId, StateID, NonceID, FingerPrint, TargetUrl});
 
         // Validate device fingerprint against the one in cookie
-        if (cookieFingerprint !== deviceId) {
-          logger.warn("Fingerprint mismatch detected in callback", { correlationId, expected: deviceId, received: cookieFingerprint });
-          return res.status(401).json({ error: "Fingerprint mismatch. Re-authenticate required." });
+        if (FingerPrint !== deviceId) {
+          logger.warn("FingerPrint mismatch detected in callback", { correlationId, expected: deviceId, received: FingerPrint });
+          return res.status(401).json({ error: "FingerPrint mismatch. Re-authenticate required." });
         }
-        logger.info("Fingerprint match confirmed in callback", { correlationId });
+        logger.info("FingerPrint match confirmed in callback", { correlationId });
 
         // Exchange authorization code for tokens with PING (idaas)
         try {
@@ -212,6 +213,7 @@ app.post("/advice", async (req, res) => {
             RememberMe: finalTokenResponse.data.remember_me || false,
             StateID,
             NonceID,
+            TargetUrl,
             ...(tokenResponse.data.remember_me
               ? {
                   OriginalAccessToken: tokenResponse.data.access_token,
@@ -219,6 +221,7 @@ app.post("/advice", async (req, res) => {
                   OriginalRefreshToken: tokenResponse.data.refresh_token,
                 }
               : {}),
+            
           };
 
           sessionStore[newSessionId] = session;
@@ -246,7 +249,7 @@ app.post("/advice", async (req, res) => {
           logger.info("Session record found in PersistenceStore", { correlationId, SessionID: sessionId, session });
           // Validate fingerprint from session against current DeviceID
           if (session.FingerPrint !== deviceId) {
-            logger.warn("Fingerprint mismatch detected in session lookup", { correlationId, expected: deviceId, stored: session.FingerPrint });
+            logger.warn("FingerPrint mismatch detected in session lookup", { correlationId, expected: deviceId, stored: session.FingerPrint });
             session = null;
           } else if (isAccessTokenExpired(session)) {
             logger.info("AccessToken expired; attempting to refresh token", { correlationId, SessionID: sessionId });
@@ -304,6 +307,7 @@ app.post("/advice", async (req, res) => {
       AccessToken: null,
       IdToken: null,
       RefreshToken: null,
+      TargetUrl: context.url
     };
     logger.info("Composed new COOKIE_STAPLES_SESSION payload", { correlationId, sessionCookiePayload });
 

@@ -81,47 +81,41 @@ app.get("/login", (req, res) => {
     // Set session cookie with default expiry as per sequence diagram.
     res.cookie("COOKIE_STAPLES_SESSION", staplesSessionId, { httpOnly: true, secure: false });
     logger.debug("Set COOKIE_STAPLES_SESSION cookie with default expiry", { correlationId, cookieValue: staplesSessionId });
-    // Redirect to PING Authorization URL
     logger.info("Redirecting browser to PING Authorization URL", { correlationId, redirectUrl: authnUrl });
     return res.redirect(authnUrl);
   }
 
-  // If HTTP_STAPLES_JWT header is present, validate and process existing session.
-  if (staplesJwtToken) {
-    logger.info("Detected HTTP_STAPLES_JWT header - validating existing session", { correlationId });
-    jwt.verify(staplesJwtToken, getSigningKey, { algorithms: ["RS256"] }, (err, decoded) => {
-      if (err) {
-        logger.warn("JWT verification failed", { correlationId, error: err.message });
-        return res.status(401).send("Invalid JWT");
-      }
-
-      logger.info("JWT verified successfully", { correlationId, decoded });
-      const rememberMe = decoded.RememberMe === true;
-      const cookieOptions = {
-        httpOnly: true,
-        secure: false,
-        ...(rememberMe ? { maxAge: 180 * 24 * 60 * 60 * 1000 } : {}), // Persistent cookie if 'RememberMe' is true.
-      };
-
-      // Set session cookie according to whether 'RememberMe' is enabled.
-      res.cookie("COOKIE_STAPLES_SESSION", staplesSessionId, cookieOptions);
-      logger.info("Session cookie set", {
-        correlationId,
-        sessionId: staplesSessionId,
-        rememberMe,
-        cookieOptions,
-      });
-
-      // Forward the request to downstream TierB via Zuul.
-      logger.info("Forwarding validated JWT to downstream TierB via Zuul", { correlationId });
-      return res.json(decodeStaplesJwt(staplesJwtToken, correlationId));
-    });
-    return;
+  if (!staplesJwtToken) {
+    logger.warn("No HTTP_STAPLES_JWT token provided in /login", { correlationId });
+    return res.status(401).json({ error: "No HTTP_STAPLES_JWT token provided" });
   }
 
-  // Neither HTTP_STAPLES_AUTHN_URL nor HTTP_STAPLES_JWT present: user must initiate authentication.
-  logger.info("No authentication headers found; prompting user to login", { correlationId });
-  return res.send("<h1>Login Required</h1><p>Please initiate authentication.</p>");
+  jwt.verify(staplesJwtToken, getSigningKey, { algorithms: ["RS256"] }, (err, decoded) => {
+    if (err) {
+      logger.error("JWT verification failed in /login", { correlationId, error: err.message });
+      return res.status(401).json({ error: "Invalid staplesJwtToken", details: err.message });
+    }
+
+    logger.info("JWT verified successfully in /login", { correlationId, decoded });
+    const rememberMe = decoded.RememberMe === true;
+    const cookieOptions = {
+      httpOnly: true,
+      secure: false,
+      ...(rememberMe ? { maxAge: 180 * 24 * 60 * 60 * 1000 } : {}), // Persistent cookie if applicable.
+    };
+
+    // Set session cookie as per sequence diagram instructions.
+    res.cookie("COOKIE_STAPLES_SESSION", staplesSessionId, cookieOptions);
+    logger.info("Session cookie set in /login", {
+      correlationId,
+      sessionId: staplesSessionId,
+      rememberMe,
+      cookieOptions,
+    });
+
+    return res.render("jsonViewer", { inputData: expandTimestamps(parseJwt(staplesJwtToken, true)) });
+  
+  });
 });
 
 // /callback Route - Handles redirection from PING as per sequence diagram
@@ -129,8 +123,8 @@ app.get("/callback", async (req, res) => {
   const correlationId = req.correlationId;
   logger.info("Received /callback request", { correlationId, query: req.query });
   try {
-    const staplesJwtToken = req.staplesJwtToken;
-    const staplesSessionId = req.staplesSessionId;
+
+    const { correlationId, staplesJwtToken, staplesSessionId } = req;
 
     if (!staplesJwtToken) {
       logger.warn("No HTTP_STAPLES_JWT token provided in /callback", { correlationId });
@@ -160,11 +154,9 @@ app.get("/callback", async (req, res) => {
         cookieOptions,
       });
 
-      //const decodedData = decodeStaplesJwt(staplesJwtToken, correlationId);
-      return res.render("jsonViewer", { inputData: expandTimestamps(parseJwt(staplesJwtToken, true)) });
-      //return res.render("decodedView", { inputData: parseJwt(staplesJwtToken, true) });
-      //return res.json(parseJwt(staplesJwtToken, true));
-
+      logger.info("Redirecting from /callback to TargetUrl", { correlationId, TargetUrl: decoded.TargetUrl });
+      return res.redirect(decoded.TargetUrl);
+    
     });
   } catch (error) {
     logger.error("Error processing /callback", { correlationId, error: error.message });
