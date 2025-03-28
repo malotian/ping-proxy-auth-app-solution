@@ -8,8 +8,6 @@ const config = require("./config");
 const winston = require("winston");
 const path = require("path");
 
-
-
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
@@ -163,7 +161,7 @@ app.get("/callback", async (req, res) => {
       });
 
       //const decodedData = decodeStaplesJwt(staplesJwtToken, correlationId);
-      return res.render("jsonViewer", { inputData: parseJwt(staplesJwtToken, true) });
+      return res.render("jsonViewer", { inputData: expandTimestamps(parseJwt(staplesJwtToken, true)) });
       //return res.render("decodedView", { inputData: parseJwt(staplesJwtToken, true) });
       //return res.json(parseJwt(staplesJwtToken, true));
 
@@ -198,6 +196,37 @@ function parseJwt(input, recursive = true) {
     });
   }
   return input;
+}
+
+function expandTimestamps(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map(expandTimestamps);
+  }
+
+  if (obj !== null && typeof obj === 'object') {
+    for (const key of Object.keys(obj)) {
+      obj[key] = expandTimestamps(obj[key]);
+    }
+    return obj;
+  }
+
+  if (typeof obj === 'number' && obj >= 1e9) {
+    const date = new Date(obj * 1000);
+    const longDate = date.toLocaleString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      timeZone: 'UTC',
+      timeZoneName: 'short'
+    });
+    return `${obj}|${longDate}`;
+  }
+
+  return obj;
 }
 // Start the TierA service with detailed startup logging
 app.listen(config.port, () => {

@@ -218,7 +218,7 @@ app.post("/advice", async (req, res) => {
                   OriginalIdToken:    tokenResponse.data.id_token,
                   OriginalRefreshToken: tokenResponse.data.refresh_token,
                 }
-              : {}),            
+              : {}),
           };
 
           sessionStore[newSessionId] = session;
