@@ -319,7 +319,7 @@ app.post("/advice", async (req, res) => {
       response_type: config.response_type,
       state: stateId,
       nonce: nonceId,
-      acr_values: config.acrValues,
+      //acr_values: config.acrValues,
     });
     const authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParams.toString()}`;
     logger.info("Constructed PING Authentication URL", { correlationId, authnUrl });

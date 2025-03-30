@@ -1,5 +1,10 @@
 {
   "dependencies": {
     "@andypf/json-viewer": "^2.1.10"
-  }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.1",
+    "@types/node": "^22.13.14"
+  },
+  "scripts": {}
 }
