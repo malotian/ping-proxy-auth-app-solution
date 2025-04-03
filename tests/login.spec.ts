@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 
 test('login.with.username',async ({ page }) => {
-  
+
   // 1. Go to initial URL
   await page.goto('https://app.lab.com:3000/login');
 
@@ -52,6 +52,7 @@ test('login.with.username',async ({ page }) => {
 });
 
 test('login.with.email', async ({ page }) => {
+
   // 1. Go to initial URL
   await page.goto('https://app.lab.com:3000/login');
 

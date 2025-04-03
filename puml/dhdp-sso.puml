@@ -1,0 +1,53 @@
+@startuml Authentication_Flow_Stages
+
+title DHDP Multi-App Authentication Flow (Keycloak OIDC)
+
+start
+
+partition "Stage 1: User Access & Initial Redirect" {
+  :User accesses an application\n(DHDP, CanDIG, IAI, Bitnobi, Jupyter);
+  if (Authenticated Session Exists?) then (No)
+    :Redirect user to Keycloak\nfor authentication;
+  else (Yes)
+    :Direct application access (SSO);
+    stop
+  endif
+}
+
+partition "Stage 2: Realm Discovery & IDP Selection" {
+  :Keycloak prompts user to enter email;
+  :User provides email (e.g., user@HospitalB.com);
+  :Keycloak determines correct IDP\nbased on email domain;
+  :Redirect user to the organization's IDP;
+}
+
+partition "Stage 3: IDP Authentication & Token Issuance" {
+  :User authenticates at IDP\n(login & MFA if applicable);
+  if (Credentials Valid?) then (Yes)
+    :IDP issues authorization code;
+    :Redirect user back to Keycloak\nwith authorization code;
+  else (No)
+    :Authentication failure;\nUser prompted to retry;
+    stop
+  endif
+}
+
+partition "Stage 4: Token Exchange by Keycloak" {
+  :Keycloak exchanges authorization code\nfor IDP Access Token;
+  :Keycloak generates OIDC-compliant JWT token\n(application-specific access token);
+  :Return JWT Access Token\nto user's browser;
+}
+
+partition "Stage 5: Application Access & Single Sign-On" {
+  :User presents JWT token\nto the requesting application;
+  if (Token Validated by Application?) then (Yes)
+    :Application grants access to user;
+    :User seamlessly accesses\nother integrated applications (SSO);
+    stop
+  else (No)
+    :Token validation failed;\nUser retry required;
+    stop
+  endif
+}
+
+@enduml

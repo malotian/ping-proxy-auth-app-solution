@@ -1,0 +1,39 @@
+@startuml
+start
+
+:User initiates login via /authorize;
+:Redirects to Ping for authentication;
+:User authenticates (optionally selects Remember Me);
+:Ping redirects with authorization code;
+
+:Auth receives authorization code;
+:Auth exchanges code with ClientID/ClientSecret;
+:Receives AccessToken, RefreshToken, RememberMe flag;
+
+if (RememberMe == true?) then (yes)
+  :Auth performs backchannel token exchange;
+  :Uses RememberMeClientID/ClientSecret;
+  :Receives long-lived AccessToken and RefreshToken;
+else (no)
+  :Proceed with short-lived tokens;
+endif
+
+:Session starts;
+
+repeat
+  :AccessToken expires;
+  if (RefreshToken is still valid?) then (yes)
+    if (RememberMe == true?) then (yes)
+      :Renew tokens with RememberMeClientID/ClientSecret;
+    else (no)
+      :Renew tokens with ClientID/ClientSecret;
+    endif
+  else (no)
+    :RefreshToken expired;
+    :Restart authentication via /authorize;
+    stop
+  endif
+repeat while (Session continues)
+
+stop
+@enduml

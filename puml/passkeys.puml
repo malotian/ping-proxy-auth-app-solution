@@ -1,0 +1,140 @@
+@startuml
+' Title
+title Passkey Registration and Authentication with PingOne Hosted Pages (WebAuthn + Payloads)
+
+' Actors
+actor User
+participant Browser as "Client (Browser)"
+participant Ping as "PingOne (Hosted Page + API)"
+database PingDB as "PingOne Identity Store"
+
+==== REGISTRATION FLOW ====
+
+User -> Browser : Initiates registration by clicking "Register with Passkey"
+Browser -> Ping : Redirects to PingOne Hosted Registration Page
+
+Ping -> Ping : Generate WebAuthn registration options (challenge + publicKeyCredentialCreationOptions)
+Ping --> Browser : Inject publicKeyCredentialCreationOptions
+note right of Ping
+  Example Payload:
+  {
+    challenge: "base64-challenge",
+    rp: {
+      name: "DotCom",
+      id: "staples.com"
+    },
+    user: {
+      id: "base64-abc123",
+      name: "johndoe@example.com",
+      displayName: "John Doe"
+    },
+    pubKeyCredParams: [
+      { type: "public-key", alg: -7 }
+    ],
+    authenticatorSelection: {
+      userVerification: "preferred",
+      residentKey: "preferred"
+    },
+    timeout: 60000,
+    attestation: "none"
+  }
+end note
+
+Browser -> Browser : Calls navigator.credentials.create(publicKeyCredentialCreationOptions)
+note right of Browser
+  Input:
+  navigator.credentials.create({
+    publicKey: publicKeyCredentialCreationOptions
+  })
+
+  Returns:
+  PublicKeyCredential object containing:
+  {
+    id, rawId,
+    response: {
+      attestationObject,
+      clientDataJSON
+    },
+    type: "public-key"
+  }
+end note
+Browser -> Browser : Display native biometric/passkey UI prompt to the user
+Browser -> Ping : Returns credential (attestationObject, clientDataJSON)
+note right of Browser
+  Payload:
+  {
+    id, rawId,
+    response: {
+      attestationObject,
+      clientDataJSON
+    },
+    type: "public-key"
+  }
+end note
+
+Ping -> Ping : Finalize Registration
+Ping -> Ping : Verify challenge, attestation
+Ping -> PingDB : Store credential (userId, credentialId, publicKey)
+Ping --> Browser : Registration successful (200 OK)
+Browser -> Browser : Show confirmation / redirect to app
+
+==== AUTHENTICATION FLOW ====
+User -> Browser : Initiates login by clicking "Login with Passkey"
+Browser -> Ping : Redirects to PingOne Hosted Login Page
+
+Ping -> PingDB : Lookup user by username
+Ping -> Ping : Generate WebAuthn authentication options (challenge + publicKeyCredentialRequestOptions)
+Ping --> Browser : Inject publicKeyCredentialRequestOptions
+note right of Ping
+  Example Payload:
+  {
+    challenge: "base64-challenge",
+    timeout: 60000,
+    rpId: "example.com",
+    allowCredentials: [
+      { id: "base64-credentialId", type: "public-key" }
+    ],
+    userVerification: "preferred"
+  }
+end note
+
+Browser -> Browser : Calls navigator.credentials.get(publicKeyCredentialRequestOptions)
+note right of Browser
+  Input:
+  navigator.credentials.get({
+    publicKey: publicKeyCredentialRequestOptions
+  })
+
+  Returns:
+  PublicKeyCredential object containing:
+  {
+    id, rawId,
+    response: {
+      authenticatorData,
+      clientDataJSON,
+      signature
+    },
+    type: "public-key"
+  }
+end note
+Browser -> Browser : Display native biometric/passkey UI prompt to the user
+Browser -> Ping : Returns assertion (authenticatorData, clientDataJSON, signature)
+note right of Browser
+  Payload:
+  {
+    id, rawId,
+    response: {
+      authenticatorData,
+      clientDataJSON,
+      signature
+    },
+    type: "public-key"
+  }
+end note
+
+Ping -> Ping : Finalize Authentication
+Ping -> Ping : Verify challenge, signature, origin
+Ping -> PingDB : Validate credential, fetch user
+Ping --> Browser : Authentication successful (200 OK) + issues ID token
+Browser -> Browser : Redirect back to app with token/session
+@enduml

@@ -1,0 +1,100 @@
+@startuml
+skinparam participantPadding 20
+
+title Comprehensive FCM Communication Flow with GPS Decision Logic
+
+participant "Your App" as App
+participant "Google Play Services (GPS)" as GPS
+participant "Firebase Cloud Messaging (FCM)" as FCM
+participant "Your Backend Server" as Backend
+
+== Device/App Startup or Event ==
+
+App -> GPS : Request FCM Registration Token
+note right
+  Local IPC call
+  (Secure, OS-level)
+end note
+
+alt  GPS determines new token required (due to App Install/Update, Reinstall, GPS/OS Update)
+  GPS -> FCM : Request New Registration Token
+  note right
+    HTTPS Request
+    TLS/SSL secured, encrypted channel
+  end note
+
+  FCM --> GPS : Returns New FCM Token
+  note left
+    JSON payload example:
+    {
+      "token": "new_token_abc789..."
+    }
+  end note
+
+  GPS --> App : Delivers New FCM Token
+  note left
+    Local IPC 
+    (Secure, OS-level)
+  end note
+else GPS determines existing token is still valid
+  GPS --> App : Returns Existing FCM Token
+  note left
+    Cached JSON payload example:
+    {
+      "token": "existing_token_xyz123..."
+    }
+  end note
+else
+end
+
+App -> Backend : Send Token to Backend
+note right
+  HTTPS REST API Call
+  JSON payload example:
+  {
+    "userId": "user_123",
+    "fcmToken": "token_xyz123_or_new_abc789..."
+  }
+end note
+
+Backend --> App : Token Stored Acknowledgement
+note left: HTTP 200 OK
+
+== Sending Notification/Data Message ==
+
+Backend -> FCM : Send Notification/Data Message
+note right
+  HTTPS POST Request
+  JSON payload example:
+  {
+    "registration_ids": ["token_xyz123_or_new_abc789..."],
+    "notification": {
+      "title": "Hello User",
+      "body": "You have a new message."
+    },
+    "data": {
+      "messageId": "msg_789",
+      "userAction": "open_chat"
+    }
+  }
+end note
+
+FCM -> GPS : Deliver Notification/Data
+note left
+  TLS-secured, Encrypted Payload
+  JSON payload (same as above)
+end note
+
+GPS -> App : Notification/Data Delivery
+note left
+  Local IPC 
+  (Secure, OS-level)
+end note
+
+note over App
+  App handles payload:
+  - Notification Payload (auto-display)
+  - Data Payload (custom logic in code)
+end note
+
+@enduml

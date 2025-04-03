@@ -1,0 +1,117 @@
+@startuml
+
+start
+
+:Browser requests (TierA endpoint);
+:NGINX forwards complete HTTP Request Context to Auth;
+
+:Auth computes `DeviceID`;
+
+:Auth inspects HTTP request for `COOKIE_STAPLES_SESSION`;
+
+if (Is `COOKIE_STAPLES_SESSION` present?) then (Yes)
+    if (Is request URL `/callback?code=CodeFromPingHere`?) then (Yes)
+        #Yellow: Handling callback request from PING authentication;
+        :Auth parses `COOKIE_STAPLES_SESSION` and extracts:\n- `StateID`\n- `NonceID`\n- `FingerPrint`;
+
+        if (Does `FingerPrint` match `DeviceID`?) then (Yes)
+            #Yellow: Fingerprint matches, no tampering detected;
+            :Auth exchanges `code` with PING to obtain:\n- `AccessToken`\n- `IDToken`\n- `RefreshToken`\n- `RememberMe`;
+
+            if (`RememberMe` is true?) then (Yes)
+                #Yellow: Exchange short-lived tokens for long-lived ones using RememberMeClient credentials;
+                :Auth exchanges `AccessToken` for:\n- long-lived `AccessToken`\n- long-lived `RefreshToken`\n(using `RememberMeClientID` / `RememberMeClientSecret`);
+            endif
+
+            :Auth generates new GUID for `SessionID`;
+            :Auth updates session record in PersistenceStore:\n`{Key=SessionID, Value={AccessToken, IDToken, RefreshToken, RememberMe, FingerPrint=DeviceID, State=StateID, Nonce=NonceID}}`;
+        else (No)
+            #Yellow: Possible cookie theft detected;\nUser must re-authenticate;
+            stop
+        endif
+    endif
+endif
+
+if (Session is valid?) then (Yes)
+    if (`FingerPrint` matches `DeviceID`?) then (Yes)
+        if (`AccessToken` expired?) then (Yes)
+            if (`RefreshToken` is valid?) then (Yes)
+                if (`RememberMe` is true?) then (Yes)
+                    :Auth renews tokens via PING using `RememberMeClientID` / `RememberMeClientSecret`;
+                else (No)
+                    :Auth renews tokens via PING using `ClientID` / `ClientSecret`;
+                endif
+
+                :Auth updates session record in PersistenceStore:\n`{Key=SessionID, Value={AccessToken, IDToken, RefreshToken, RememberMe, FingerPrint=DeviceID, State=StateID, Nonce=NonceID}}`;
+            endif
+        endif
+    endif
+endif
+
+if (Is `AccessToken` valid?) then (Yes)
+    #Yellow: User is authenticated, generating JWT;
+    :Auth builds `StaplesJWT` from session;
+    
+    if (`RememberMe` is `true`?) then (Yes)
+        :Add `RememberMe: true` to `StaplesJWT`;
+    endif
+
+    :Auth advises NGINX to set:\n- `HTTP_STAPLES_JWT`\n- `HTTP_STAPLES_COOKIE_VALUE` = `SessionID`;
+    :NGINX modifies HTTP request;
+else (No)
+    #Yellow: Starting new authentication flow;
+    :Auth generates `StateID`, `NonceID`;
+    :Auth creates `COOKIE_STAPLES_SESSION_VALUE`:\n`{Key=null, Value={AccessToken=null, IDToken=null, RefreshToken=null, RememberMe=null, FingerPrint=DeviceID, State=StateID, Nonce=NonceID}}`;
+    :Auth builds `PING Authentication URL` with:\n- redirecturi=/callback\n- state\n- nonce;
+    :Auth advises NGINX to set:\n- `HTTP_STAPLES_AUTHN_URL`\n- `HTTP_STAPLES_COOKIE_VALUE`;
+    :NGINX modifies HTTP request;
+endif
+
+:NGINX forwards request to TierA;
+
+if (`HTTP_STAPLES_AUTHN_URL` header present?) then (Yes)
+    :TierA sets `COOKIE_STAPLES_SESSION` from `HTTP_STAPLES_COOKIE_VALUE`;
+    :TierA redirects Browser to PING;
+    :Browser follows redirect to PING Authorization URL;
+
+    :PING computes `RiskScore` -- TBD: via NuData, SpyCloud, etc
+
+    if (`COOKIE_PING_REMEMBERME` present AND RiskScore is low?) then (Yes)
+        #Yellow: Seamless auth with `COOKIE_PING_REMEMBERME`;
+    else (No)
+        :PING prompts user for credentials;
+        :Browser submits credentials with `RememberMe` flag;
+        :PING validates credentials;
+
+        if (`RememberMe` selected?) then (Yes)
+            #Yellow: Persistent cookie issued for 180 days;
+            :PING issues `COOKIE_PING_REMEMBERME` for `.identity.staples.com`;
+        endif
+    endif
+
+    :PING redirects to `/callback?code=CodeFromPingHere`;
+    #Yellow: Continue from start;
+    stop
+endif
+
+if (`HTTP_STAPLES_JWT` header present?) then (Yes)
+    if (`RememberMe: true`?) then (Yes)
+        :TierA sets cookie with RefreshToken expiry;
+    else (No)
+        :TierA sets cookie with default expiry;
+    endif
+
+    :Browser confirms cookie set;
+    :TierA invokes downstream API with JWT;
+    :Zuul validates JWT;
+
+    if (Validation succeeds?) then (Yes)
+        :Zuul grants access to TierB;
+    else (No)
+        #Yellow: Token validation failed;
+        stop
+    endif
+endif
+
+stop
+@enduml
