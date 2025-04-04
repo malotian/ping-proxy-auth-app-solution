@@ -11,7 +11,7 @@ module.exports = {
   idaasRememberClientID: 'staples_tier_a_app_actor_client_id',
   idaasRememberClientSecret: 'staples_tier_a_app_actor_client_secret',
   appCallbackEnpoint: 'https://app.lab.com:3000/callback',
-  acrValues: 'staples_tier_a_application',
+  //acrValues: 'staples_dotcom_login_journey',
   scope: 'openid',
   response_type: 'code',
   apiKey: '67541efcb5e9482fe50df2d2aa603d1d',

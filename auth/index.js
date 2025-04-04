@@ -117,6 +117,38 @@ function buildStaplesJWT(session) {
   return token;
 }
 
+async function refreshTokenThrice(refreshToken, correlationId) {
+  let latestRefreshResponse = null;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      logger.info(`Attempt ${attempt}: Refreshing token`, { correlationId });
+
+      const refreshResponse = await axios.post(
+        config.idaasAccessTokenEndpoint,
+        qs.stringify({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: config.idaasRememberClientID,
+          client_secret: config.idaasRememberClientSecret,
+        }),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+
+      latestRefreshResponse = refreshResponse;
+      logger.info(`Attempt ${attempt}: Token refresh successful`, {correlationId, refreshResponse: refreshResponse.data});
+    } catch (refreshError) {
+      logger.warn(`Attempt ${attempt}: Token refresh failed`, {
+        correlationId,
+        error: refreshError
+      });
+      break; // optional: break on first failure or allow retries
+    }
+  }
+
+  return latestRefreshResponse;
+}
+
 // Main authentication advice route following sequence diagram
 app.post("/advice", async (req, res) => {
   const correlationId = req.correlationId;
@@ -188,7 +220,7 @@ app.post("/advice", async (req, res) => {
               config.idaasAccessTokenEndpoint,
               qs.stringify({
                 grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-                scope: "transfer",
+                scope: "transfer openid",
                 client_id: config.idaasRememberClientID,
                 client_secret: config.idaasRememberClientSecret,
                 subject_token: tokenResponse.data.access_token,
@@ -198,8 +230,25 @@ app.post("/advice", async (req, res) => {
             );
             logger.info("Token exchange (remember_me) successful", {correlationId, tokenResponseRememberMe: tokenResponseRememberMe.data});
             tokenResponseRememberMe.data.remember_me = true;
-            finalTokenResponse = tokenResponseRememberMe;;
-        
+
+            finalTokenResponse.data.access_token = tokenResponseRememberMe.data.access_token;
+            finalTokenResponse.data.id_token = tokenResponseRememberMe.data.id_token;
+            finalTokenResponse.data.remember_me = true;
+
+
+            // multi refresh test
+            // const latestRefreshTokenResponseRemeberMe = await refreshTokenThrice(
+            //   tokenResponseRememberMe.data.refresh_token,
+            //   correlationId
+            // );          
+
+            // if (latestRefreshTokenResponseRemeberMe?.data?.access_token) {
+            //   finalTokenResponse.data.access_token = latestRefreshTokenResponseRemeberMe.data.access_token;
+            // }
+            
+            // if (latestRefreshTokenResponseRemeberMe?.data?.id_token) {
+            //   finalTokenResponse.data.id_token = latestRefreshTokenResponseRemeberMe.data.id_token;
+            // }
           }
 
           // Generate new SessionID and update session store (PersistenceStore)
