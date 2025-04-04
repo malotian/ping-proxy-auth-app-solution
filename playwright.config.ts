@@ -33,6 +33,7 @@ export default defineConfig({
     contextOptions: {
       ignoreHTTPSErrors: true
     },    
+    headless: true
   },
 
   /* Configure projects for major browsers */
