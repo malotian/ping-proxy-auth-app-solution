@@ -1,6 +1,8 @@
 {
   "dependencies": {
-    "@andypf/json-viewer": "^2.1.10"
+    "@andypf/json-viewer": "^2.1.10",
+    "axios": "^1.8.4",
+    "qs": "^6.14.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.51.1",
