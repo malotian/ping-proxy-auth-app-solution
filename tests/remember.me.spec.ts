@@ -39,7 +39,6 @@ function decodeJwt(token: string, label: string) {
   }
 }
 
-
 test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, browser }) => {
   let capturedAuthCode = '';
 
@@ -118,12 +117,17 @@ test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, b
   });
 
   const regularClientAccessToken = tokenRes.data.access_token;
+  const regularClientRefreshToken = tokenRes.data.refresh_token;
+  const regularClientIdToken = tokenRes.data.id_token;
+
   console.log('Regular Client Access Token:', regularClientAccessToken);
   decodeJwt(regularClientAccessToken, 'RegularClient Access Token');
 
-  const regularClientRefreshToken = tokenRes.data.refresh_token;
   console.log('Regular Client Refresh Token:', regularClientRefreshToken);
   decodeJwt(regularClientRefreshToken, 'RegularClient Refresh Token');
+
+  console.log('Regular Client ID Token:', regularClientIdToken);
+  decodeJwt(regularClientIdToken, 'RegularClient ID Token');
 
   console.log('Exchanging token for RememberMe Client...');
   const impersonationRes = await axios.post(tokenUrl, qs.stringify({
@@ -139,6 +143,7 @@ test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, b
 
   const rememberMeClientAccessToken = impersonationRes.data.access_token;
   const rememberMeClientRefreshToken = impersonationRes.data.refresh_token;
+  const rememberMeClientIdToken = impersonationRes.data.id_token;
 
   console.log('RememberMe Client Access Token:', rememberMeClientAccessToken);
   decodeJwt(rememberMeClientAccessToken, 'RememberMeClient Access Token');
@@ -146,11 +151,15 @@ test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, b
   console.log('RememberMe Client Refresh Token:', rememberMeClientRefreshToken);
   decodeJwt(rememberMeClientRefreshToken, 'RememberMeClient Refresh Token');
 
+  // console.log('RememberMe Client ID Token:', rememberMeClientIdToken);
+  // decodeJwt(rememberMeClientIdToken, 'RememberMeClient ID Token');
+
   expect(rememberMeClientAccessToken).not.toBeNull();
   expect(rememberMeClientRefreshToken).not.toBeNull();
 
-  console.log('Refreshing RememberMe Client token...');
-  const refreshRes = await axios.post(tokenUrl, qs.stringify({
+  console.log('Refreshing RememberMe Client Access token...');
+
+  const refreshTokenResponse = await axios.post(tokenUrl, qs.stringify({
     grant_type: 'refresh_token',
     refresh_token: rememberMeClientRefreshToken,
     client_id: rememberMeClientId,
@@ -159,9 +168,14 @@ test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, b
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
 
-  const refreshedRememberMeClientAccessToken = refreshRes.data.access_token;
+  const refreshedRememberMeClientAccessToken = refreshTokenResponse.data.access_token;
+  const refreshedRememberMeClientIdToken = refreshTokenResponse.data.id_token;
+
   console.log('Refreshed RememberMe Client Access Token:', refreshedRememberMeClientAccessToken);
   decodeJwt(refreshedRememberMeClientAccessToken, 'Refreshed RememberMeClient Access Token');
+
+  console.log('Refreshed RememberMe Client ID Token:', refreshedRememberMeClientIdToken);
+  decodeJwt(refreshedRememberMeClientIdToken, 'Refreshed RememberMeClient ID Token');
 
   expect(refreshedRememberMeClientAccessToken).not.toBeNull();
 
