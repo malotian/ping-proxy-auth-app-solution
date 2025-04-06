@@ -178,6 +178,7 @@ test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, b
   decodeJwt(refreshedRememberMeClientIdToken, 'Refreshed RememberMeClient ID Token');
 
   expect(refreshedRememberMeClientAccessToken).not.toBeNull();
+  expect(refreshedRememberMeClientIdToken).not.toBeNull();
 
   console.log('Flow complete: Auth Code to Impersonation to Refresh');
 });
