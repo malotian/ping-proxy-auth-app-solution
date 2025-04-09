@@ -119,15 +119,22 @@ test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, b
   const regularClientAccessToken = tokenRes.data.access_token;
   const regularClientRefreshToken = tokenRes.data.refresh_token;
   const regularClientIdToken = tokenRes.data.id_token;
+  const rememberMe = tokenRes.data.remember_me;
 
   console.log('Regular Client Access Token:', regularClientAccessToken);
   decodeJwt(regularClientAccessToken, 'RegularClient Access Token');
+  expect(regularClientAccessToken).not.toBeNull();
 
   console.log('Regular Client Refresh Token:', regularClientRefreshToken);
   decodeJwt(regularClientRefreshToken, 'RegularClient Refresh Token');
+  expect(regularClientRefreshToken).not.toBeNull();
 
   console.log('Regular Client ID Token:', regularClientIdToken);
   decodeJwt(regularClientIdToken, 'RegularClient ID Token');
+  expect(regularClientIdToken).not.toBeNull();
+
+  console.log('Regular Client RememberMe:', rememberMe);
+  expect(rememberMe).not.toBeNull();
 
   console.log('Exchanging token for RememberMe Client...');
   const impersonationRes = await axios.post(tokenUrl, qs.stringify({
@@ -179,6 +186,13 @@ test('Auth Code to Impersonation to Refresh (Verbose Logging)', async ({ page, b
 
   expect(refreshedRememberMeClientAccessToken).not.toBeNull();
   expect(refreshedRememberMeClientIdToken).not.toBeNull();
+
+    // 8. Check for the 'session-jwt' cookie on the openam-simeio2-demo domain
+  const pingCookies = await page.context().cookies('https://openam-simeio2-demo.forgeblocks.com/');
+  const pingPersistantSessionCookie = pingCookies.find((cookie) => cookie.name === 'session-jwt');
+    
+  expect(pingPersistantSessionCookie).toBeDefined();
+  expect(pingPersistantSessionCookie?.value).toBeTruthy();
 
   console.log('Flow complete: Auth Code to Impersonation to Refresh');
 });
