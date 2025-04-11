@@ -28,7 +28,8 @@ const config = {
     host: '0.0.0.0',
     port: 3000,
   },
-  rememberMe: false
+  rememberMe: true,
+  loginFromCheckout: true
 };
 
 const openidConfigUrl = `${config.ping.baseUrl}/am/oauth2/${config.ping.realm}/.well-known/openid-configuration`;
@@ -99,9 +100,10 @@ test('🔁 Full Auth Flow: Auth Code ➝ Impersonation ➝ Refresh ➝ Cookie Va
     client_id: config.clients.regular.clientId,
     redirect_uri: config.redirectUri,
     response_type: 'code',
-    scope: 'openid',
+    scope: 'openid profile email',
     state,
     nonce,
+    ...(config.loginFromCheckout ? { showGuest: true } : {})
   })}`;
 
   console.log(`\n🌍 Navigating to Auth URL:\n${fullAuthUrl}`);
@@ -176,7 +178,7 @@ test('🔁 Full Auth Flow: Auth Code ➝ Impersonation ➝ Refresh ➝ Cookie Va
       subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
       client_id: config.clients.rememberMe.clientId,
       client_secret: config.clients.rememberMe.clientSecret,
-      scope: 'transfer openid',
+      scope: 'transfer openid email profile',
     }), {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
