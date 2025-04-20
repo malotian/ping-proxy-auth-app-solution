@@ -233,6 +233,7 @@ app.post("/advice", async (req, res) => {
 
             finalTokenResponse.data.access_token = tokenResponseRememberMe.data.access_token;
             finalTokenResponse.data.id_token = tokenResponseRememberMe.data.id_token;
+            finalTokenResponse.data.refresh_token = tokenResponseRememberMe.data.refresh_token;
             finalTokenResponse.data.remember_me = true;
 
 
@@ -346,6 +347,7 @@ app.post("/advice", async (req, res) => {
     logger.info("No valid session available. Initiating new authentication flow", { correlationId });
     const stateId = uuidv4();
     const nonceId = uuidv4();
+    const txnId = 'app-txn-' + uuidv4();
     logger.debug("Generated new GUIDs for StateID and NonceID", { correlationId, StateID: stateId, NonceID: nonceId });
 
     // Compose COOKIE_STAPLES_SESSION_VALUE with null tokens and current DeviceID
@@ -368,7 +370,7 @@ app.post("/advice", async (req, res) => {
       response_type: config.response_type,
       state: stateId,
       nonce: nonceId,
-      //acr_values: config.acrValues,
+      txn_id: txnId,
     });
     const authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParams.toString()}`;
     logger.info("Constructed PING Authentication URL", { correlationId, authnUrl });

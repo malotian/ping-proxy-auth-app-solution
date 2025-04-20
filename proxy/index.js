@@ -44,6 +44,9 @@ app.use((req, res, next) => {
 const targets = {
   "app.lab.com:3000": config.mainAppUrl, // App application (TierA)
   "auth.lab.com:3000": config.authServiceTarget, // Auth service target
+  "identity.lab.com:3000": config.identityServiceUrl, // Auth service target
+
+  //// inacse localhost is used
   "localhost:3000": config.mainAppUrl, // App application (TierA)
   "localhost:3000": config.authServiceTarget, // Auth service target
 };
@@ -59,8 +62,27 @@ app.use(async (req, res, next) => {
     url: req.originalUrl,
   });
 
+  // Only intercept requests to identity.lab.com
+  if (host && host.toLowerCase().startsWith("identity.lab.com")) {
+    // Parse the full URL so we can inspect path and query params
+    const contextUrl = new URL(req.originalUrl, `https://${host}`);
+
+    // Identify an authorize request carrying our txn_id
+    const isAuthorizeRequest =
+      contextUrl.pathname.endsWith("/authorize") &&
+      contextUrl.searchParams.has("txn_id");
+
+    logger.info("Is authorize request?", { correlationId, isAuthorizeRequest });
+
+    if (isAuthorizeRequest) {
+      const txnId = contextUrl.searchParams.get("txn_id");
+      req.adviceHeaders = {
+        "X-ForgeRock-TransactionId": txnId,
+      };
+    }
+  }
   // Only call the advice service if this request is for the app domain (TierA endpoint).
-  if (host && host.toLowerCase().startsWith("app.lab.com")) {
+  else if (host && host.toLowerCase().startsWith("app.lab.com")) {
     try {
       logger.info("Forwarding complete HTTP Request Context to Auth service for advice", {
         correlationId,
