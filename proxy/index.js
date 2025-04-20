@@ -54,6 +54,18 @@ const targets = {
 // Pre-proxy middleware: only for the app domain, fetch advice headers as per sequence diagram.
 app.use(async (req, res, next) => {
   const correlationId = req.correlationId;
+
+  // ←— ADD THIS AT THE VERY TOP
+  if (
+    req.headers['purpose'] === 'prefetch' ||
+    req.headers['sec-purpose']?.includes('prerender')
+  ) {
+    logger.info('Skipping advice call for prefetch/prerender', { correlationId });
+    // ensure no auth headers get applied
+    req.adviceHeaders = {};
+    return next();
+  }
+
   const host = req.headers.host;
   logger.info("Processing request for host", {
     correlationId,
