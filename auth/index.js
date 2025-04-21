@@ -207,7 +207,7 @@ app.post("/advice", async (req, res) => {
               code: contextUrl.searchParams.get("code"),
               client_id: config.idaasClientID,
               client_secret: config.idaasClientSecret,
-              redirect_uri: config.appCallbackEnpoint,
+              redirect_uri: config.appCallbackEndpoint,
             }),
             { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
           );
@@ -365,7 +365,7 @@ app.post("/advice", async (req, res) => {
     // Compose PING Authentication URL with required parameters
     const authnParams = new URLSearchParams({
       client_id: config.idaasClientID,
-      redirect_uri: config.appCallbackEnpoint,
+      redirect_uri: config.appCallbackEndpoint,
       scope: config.scope,
       response_type: config.response_type,
       state: stateId,
