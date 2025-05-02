@@ -5,3 +5,7 @@ tunnels:
     proto: http
     addr: proxy:3000
     hostname: mock-app.ngrok.dev
+  identity-tunnel:
+    proto: http
+    addr: proxy:3000
+    hostname: mock-identity.ngrok.dev    

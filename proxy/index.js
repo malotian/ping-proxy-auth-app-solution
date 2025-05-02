@@ -41,17 +41,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Define a mapping for hosts to target URLs.
-const targets = {
-  "app-127-0-0-1.sslip.io:3000": config.mainAppUrl, // App application (TierA)
-  "auth-127-0-0-1.sslip.io:3000": config.authServiceTarget, // Auth service target
-  "identity-127-0-0-1.sslip.io:3000": config.identityServiceUrl, // Auth service target
-
-  //// inacse localhost is used
-  "localhost:3000": config.mainAppUrl, // App application (TierA)
-  "localhost:3000": config.authServiceTarget, // Auth service target
-};
-
 // Pre-proxy middleware: only for the app domain, fetch advice headers as per sequence diagram.
 app.use(async (req, res, next) => {
   const correlationId = req.correlationId;
@@ -75,8 +64,25 @@ app.use(async (req, res, next) => {
     url: req.originalUrl,
   });
 
+  identityServiceUrl = config.identityServiceUrl;
+  mainAppUrl = config.mainAppUrl;
+
+  logger.info("parsing urls", {
+    identityServiceUrl,
+    mainAppUrl
+  });
+
+  const identityHost = new URL(config.identityServiceUrl).host.toLowerCase();
+  const mainAplicationPublicHost = new URL(config.mainAppPublicUrl).host.toLowerCase();
+
+  logger.info("hosts ", {
+    identityHost,
+    mainAplicationPublicHost,
+    host
+  });
+
   // Only intercept requests to identity-127-0-0-1.sslip.io
-  if (host && host.toLowerCase().startsWith("identity-127-0-0-1.sslip.io")) {
+  if (host && host.toLowerCase().startsWith(identityHost)) {
     // Parse the full URL so we can inspect path and query params
     const contextUrl = new URL(req.originalUrl, `https://${host}`);
 
@@ -95,7 +101,7 @@ app.use(async (req, res, next) => {
     }
   }
   // Only call the advice service if this request is for the app domain (TierA endpoint).
-  else if (host && host.toLowerCase().startsWith("app-127-0-0-1.sslip.io")) {
+  else if (host && host.toLowerCase().startsWith(mainAplicationPublicHost)) {
     try {
       logger.info("Forwarding complete HTTP Request Context to Auth service for advice", {
         correlationId,
@@ -154,7 +160,7 @@ app.use(
     router: (req) => {
       const correlationId = req.correlationId;
       const host = req.headers.host;
-      const target = targets[host.toLowerCase()] || config.mainAppUrl;
+      const target = config.targets[host.toLowerCase()] || config.mainAppUrl;
       logger.info("Routing request", {
         correlationId,
         host,
