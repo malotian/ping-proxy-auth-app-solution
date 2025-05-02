@@ -42,9 +42,9 @@ app.use((req, res, next) => {
 
 // Define a mapping for hosts to target URLs.
 const targets = {
-  "app.lab.com:3000": config.mainAppUrl, // App application (TierA)
-  "auth.lab.com:3000": config.authServiceTarget, // Auth service target
-  "identity.lab.com:3000": config.identityServiceUrl, // Auth service target
+  "app-127-0-0-1.sslip.io:3000": config.mainAppUrl, // App application (TierA)
+  "auth-127-0-0-1.sslip.io:3000": config.authServiceTarget, // Auth service target
+  "identity-127-0-0-1.sslip.io:3000": config.identityServiceUrl, // Auth service target
 
   //// inacse localhost is used
   "localhost:3000": config.mainAppUrl, // App application (TierA)
@@ -74,8 +74,8 @@ app.use(async (req, res, next) => {
     url: req.originalUrl,
   });
 
-  // Only intercept requests to identity.lab.com
-  if (host && host.toLowerCase().startsWith("identity.lab.com")) {
+  // Only intercept requests to identity-127-0-0-1.sslip.io
+  if (host && host.toLowerCase().startsWith("identity-127-0-0-1.sslip.io")) {
     // Parse the full URL so we can inspect path and query params
     const contextUrl = new URL(req.originalUrl, `https://${host}`);
 
@@ -94,7 +94,7 @@ app.use(async (req, res, next) => {
     }
   }
   // Only call the advice service if this request is for the app domain (TierA endpoint).
-  else if (host && host.toLowerCase().startsWith("app.lab.com")) {
+  else if (host && host.toLowerCase().startsWith("app-127-0-0-1.sslip.io")) {
     try {
       logger.info("Forwarding complete HTTP Request Context to Auth service for advice", {
         correlationId,

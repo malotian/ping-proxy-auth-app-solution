@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 
 test('login.with.username', async ({ page }) => {
   // 1. Go to initial URL
-  await page.goto('https://app.lab.com:3000/login');
+  await page.goto('https://app-127-0-0-1.sslip.io:3000/login');
   
   // 2. Optionally wait for the page to be idle (or fully loaded) if needed
   await page.waitForLoadState('networkidle');
@@ -34,7 +34,7 @@ test('login.with.username', async ({ page }) => {
 
 test('login.with.email', async ({ page }) => {
   // 1. Go to initial URL
-  await page.goto('https://app.lab.com:3000/login');
+  await page.goto('https://app-127-0-0-1.sslip.io:3000/login');
   
   // 2. Optionally wait for the page to be idle (or fully loaded) if needed
   await page.waitForLoadState('networkidle');

@@ -4,12 +4,13 @@ req_extensions = v3_req
 prompt = no
 
 [ req_distinguished_name ]
-CN = app.lab.com
+CN = app-127-0-0-1.sslip.io
 
 [ v3_req ]
 subjectAltName = @alt_names
 
 [ alt_names ]
-DNS.1 = app.lab.com
-DNS.2 = proxy.lab.com
-DNS.3 = auth.lab.com
+DNS.1 = app-127-0-0-1.sslip.io
+DNS.2 = proxy-127-0-0-1.sslip.io
+DNS.3 = auth-127-0-0-1.sslip.io
+DNS.3 = identity-127-0-0-1.sslip.io

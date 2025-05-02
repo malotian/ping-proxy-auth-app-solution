@@ -7,7 +7,7 @@ require('dotenv').config();
 const idaasFQDN  = process.env.PING_BASE_DNS_NAME || 'openam-simeio2-demo.forgeblocks.com';
 const idaasRealm    = process.env.PING_REALM                || 'bravo';
 
-const identityFQDN  = process.env.IDENTITY_SERVICE_TARGET_DNS || 'identity.lab.com:3000';
+const identityFQDN  = process.env.IDENTITY_SERVICE_TARGET_DNS || 'identity-127-0-0-1.sslip.io:3000';
 
 // Construct OAuth2 base URLs for PingOne/OpenAM
 const authorizeBase = `https://${identityFQDN}/am/oauth2/${idaasRealm}`;
@@ -19,7 +19,7 @@ module.exports = {
 
   // Upstream services
   mainAppUrl:     process.env.MAIN_APP_URL      || 'http://localhost:3001',
-  authServiceUrl: process.env.AUTH_SERVICE_URL  || 'http://auth.lab.com:3002/advice',
+  authServiceUrl: process.env.AUTH_SERVICE_URL  || 'http://auth-127-0-0-1.sslip.io:3002/advice',
 
   // Identity service root URL
   identityServiceUrl: process.env.IDENTITY_SERVICE_TARGET || `https://${identityFQDN}`,
@@ -35,7 +35,7 @@ module.exports = {
   idaasRememberClientSecret: process.env.PING_REMEMBER_CLIENT_SECRET  || 'staples_dotcom_application_remember_me_client_secret',
 
   // App callback endpoint
-  appCallbackEndpoint: process.env.APP_CALLBACK_URL || 'https://app.lab.com:3000/callback',
+  appCallbackEndpoint: process.env.APP_CALLBACK_URL || 'https://app-127-0-0-1.sslip.io:3000/callback',
 
   // OAuth2 settings
   scope:         process.env.OIDC_SCOPE          || 'openid',

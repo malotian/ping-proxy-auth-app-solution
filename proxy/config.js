@@ -8,9 +8,9 @@ const idaasFQDN  = process.env.PING_BASE_DNS_NAME || 'openam-simeio2-demo.forgeb
 
 module.exports = {
   port: process.env.PORT || 3000,
-  mainAppUrl: process.env.MAIN_APP_URL || 'http://app.lab.com:3001',
-  authServiceUrl: process.env.AUTH_SERVICE_URL || 'http://auth.lab.com:3002/advice',
-  authServiceTarget: process.env.AUTH_SERVICE_TARGET || 'http://auth.lab.com:3002',
+  mainAppUrl: process.env.MAIN_APP_URL || 'http://app-127-0-0-1.sslip.io:3001',
+  authServiceUrl: process.env.AUTH_SERVICE_URL || 'http://auth-127-0-0-1.sslip.io:3002/advice',
+  authServiceTarget: process.env.AUTH_SERVICE_TARGET || 'http://auth-127-0-0-1.sslip.io:3002',
 
   // Identity service root URL (constructed from PING FQDN and realm)
   identityServiceUrl: process.env.IDENTITY_SERVICE_TARGET || `https://${idaasFQDN}`,

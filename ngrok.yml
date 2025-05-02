@@ -1,0 +1,7 @@
+version: "2"
+authtoken: 2wCqmf2qYihR6yO3aZqmFSIfsuc_7KuD1Zs2c3pks4dHgFnmf
+tunnels:
+  proxy-tunnel:
+    proto: http
+    addr: proxy:3000
+    hostname: app-127-0-0-1.ngrok.dev

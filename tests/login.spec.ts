@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 test('login.with.username',async ({ page }) => {
 
   // 1. Go to initial URL
-  await page.goto('https://app.lab.com:3000/login');
+  await page.goto('https://app-127-0-0-1.sslip.io:3000/login');
 
   // 2. Wait for the page to load or become idle
   await page.waitForLoadState('networkidle');
@@ -22,7 +22,7 @@ test('login.with.username',async ({ page }) => {
   await page.getByTestId('fr-field-callback_2').getByTestId('input-').press('Enter');
 
   // 6. Wait for the final page or known URL pattern
-  await page.waitForURL('https://app.lab.com:3000/**');
+  await page.waitForURL('https://app-127-0-0-1.sslip.io:3000/**');
 
   // 7. Check for the cookie on the application domain
   const appCookies = await page.context().cookies();
@@ -54,7 +54,7 @@ test('login.with.username',async ({ page }) => {
 test('login.with.email', async ({ page }) => {
 
   // 1. Go to initial URL
-  await page.goto('https://app.lab.com:3000/login');
+  await page.goto('https://app-127-0-0-1.sslip.io:3000/login');
 
   // 2. Wait for the page to load or become idle
   await page.waitForLoadState('networkidle');
@@ -72,7 +72,7 @@ test('login.with.email', async ({ page }) => {
   await page.getByTestId('fr-field-callback_2').getByTestId('input-').press('Enter');
 
   // 6. Wait for the final page or known URL pattern
-  await page.waitForURL('https://app.lab.com:3000/**');
+  await page.waitForURL('https://app-127-0-0-1.sslip.io:3000/**');
 
   // 7. Check for the cookie on the application domain
   const appCookies = await page.context().cookies();

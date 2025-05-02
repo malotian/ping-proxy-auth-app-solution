@@ -23,7 +23,7 @@ const config = {
       clientSecret: 'staples_dotcom_application_remember_me_client_secret',
     },
   },
-  redirectUri: 'https://app.lab.com:3000/callback',
+  redirectUri: 'https://app-127-0-0-1.sslip.io:3000/callback',
   server: {
     host: '0.0.0.0',
     port: 3000,
