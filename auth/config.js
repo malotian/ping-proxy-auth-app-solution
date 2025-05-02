@@ -4,8 +4,8 @@ require('dotenv').config();
 
 // Pull PING DNS name and realm from environment
 //const idaasFQDN     = process.env.PING_BASE_DNS_NAME         || 'openam-staplesciam-use4-dev.id.forgerock.io';
-const idaasFQDN  = process.env.PING_BASE_DNS_NAME || 'openam-simeio2-demo.forgeblocks.com';
-const idaasRealm    = process.env.PING_REALM                || 'bravo';
+const idaasFQDN  = process.env.PING_BASE_DNS_NAME || 'openam-staplesciam-use4-dev.id.forgerock.io';
+const idaasRealm    = process.env.PING_REALM                || 'alpha';
 
 const identityFQDN  = process.env.IDENTITY_SERVICE_TARGET_DNS || 'identity-127-0-0-1.sslip.io:3000';
 

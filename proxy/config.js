@@ -4,7 +4,7 @@ require('dotenv').config();
 
 // Pull PING DNS name and realm from environment
 //const idaasFQDN  = process.env.PING_BASE_DNS_NAME || 'openam-staplesciam-use4-dev.id.forgerock.io';
-const idaasFQDN  = process.env.PING_BASE_DNS_NAME || 'openam-simeio2-demo.forgeblocks.com';
+const idaasFQDN  = process.env.PING_BASE_DNS_NAME || 'openam-staplesciam-use4-dev.id.forgerock.io';
 
 module.exports = {
   port: process.env.PORT || 3000,
