@@ -14,9 +14,9 @@ services:
       - '3002:3002'
     environment:
       - PORT=3002
-      - APP_CALLBACK_URL=https://mock-app.ngrok.dev/callback
-      - IDENTITY_SERVICE_URL=https://mock-identity.ngrok.dev
-      - PING_BASE_URL=https://openam-staplesciam-use4-dev.id.forgerock.io
+      - EXTERNAL_APPLICATION_BASE_URL=https://mock-app.ngrok.dev
+      - INTERNAL_IDENTITY_SERVICE_BASE_URL=https://mock-identity.ngrok.dev
+      - EXTERNAL_IDENTITY_SERVICE_BASE_URL=https://openam-staplesciam-use4-dev.id.forgerock.io
       - PING_REALM=alpha      
     networks:
       - sslip.io
@@ -30,8 +30,8 @@ services:
       - TLS_KEY=/certs/key.pem
       - TLS_CERT=/certs/cert.pem
       - USE_HTTPS=false // false for ngrok
-      - IDENTITY_SERVICE_URL=https://mock-identity.ngrok.dev
-      - PING_BASE_URL,=https://openam-staplesciam-use4-dev.id.forgerock.io
+      - INTERNAL_IDENTITY_SERVICE_BASE_URL=https://mock-identity.ngrok.dev
+      - EXTERNAL_IDENTITY_SERVICE_BASE_URL,=https://openam-staplesciam-use4-dev.id.forgerock.io
       - PING_REALM=alpha
     volumes:
       - ./certs:/certs:ro      

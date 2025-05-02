@@ -64,16 +64,16 @@ app.use(async (req, res, next) => {
     url: req.originalUrl,
   });
 
-  identityServiceUrl = config.identityServiceUrl;
-  mainAppUrl = config.mainAppUrl;
+  internalIdentityServiceBaseUrl = config.internalIdentityServiceBaseUrl;
+  internalApplicationBaseUrl = config.internalApplicationBaseUrl;
 
   logger.info("parsing urls", {
-    identityServiceUrl,
-    mainAppUrl
+    internalIdentityServiceBaseUrl,
+    internalApplicationBaseUrl
   });
 
-  const identityHost = new URL(config.identityServiceUrl).host.toLowerCase();
-  const mainAplicationPublicHost = new URL(config.mainAppPublicUrl).host.toLowerCase();
+  const identityHost = new URL(config.internalIdentityServiceBaseUrl).host.toLowerCase();
+  const mainAplicationPublicHost = new URL(config.externalApplicationBaseUrl).host.toLowerCase();
 
   logger.info("hosts ", {
     identityHost,
@@ -105,7 +105,7 @@ app.use(async (req, res, next) => {
     try {
       logger.info("Forwarding complete HTTP Request Context to Auth service for advice", {
         correlationId,
-        targetAdviceService: config.authServiceUrl,
+        targetAdviceService: config.internalAuthServiceAdviceEndpoint,
       });
       const context = {
         correlationId: correlationId,
@@ -126,7 +126,7 @@ app.use(async (req, res, next) => {
       };
 
       // Call the Auth service to get advice headers.
-      const adviceResponse = await axios.post(config.authServiceUrl, context, {
+      const adviceResponse = await axios.post(config.internalAuthServiceAdviceEndpoint, context, {
         headers: { "proxy-correlation-id": correlationId },
       });
       logger.info("Received advice response from Auth service", {
@@ -155,12 +155,12 @@ app.use(
   "/",
   createProxyMiddleware({
     // Default target will be overridden by the router.
-    target: config.mainAppUrl,
+    target: config.internalApplicationBaseUrl,
     changeOrigin: true,
     router: (req) => {
       const correlationId = req.correlationId;
       const host = req.headers.host;
-      const target = config.targets[host.toLowerCase()] || config.mainAppUrl;
+      const target = config.targets[host.toLowerCase()] || config.internalApplicationBaseUrl;
       logger.info("Routing request", {
         correlationId,
         host,
