@@ -8,6 +8,7 @@ const config = require("./config");
 const winston = require("winston");
 const fs = require("fs");
 const https = require("https");
+const http = require("http");
 
 const app = express();
 app.use(express.json());
@@ -192,10 +193,17 @@ app.use(
   })
 );
 
-const key = fs.readFileSync(config.tlsKey);
-const cert = fs.readFileSync(config.tlsCert);
 
-https.createServer({ key, cert }, app).listen(config.port, "0.0.0.0", () => {
-  logger.info(`proxy running on port ${config.port}`);
-});
 
+if (config.useHttps) {
+  const key = fs.readFileSync(config.tlsKey);
+  const cert = fs.readFileSync(config.tlsCert);
+
+  https.createServer({ key, cert }, app).listen(config.port, '0.0.0.0', () => {
+    logger.info(`HTTPS proxy running on port ${config.port}`);
+  });
+} else {
+  http.createServer(app).listen(config.port, '0.0.0.0', () => {
+    logger.info(`HTTP proxy running on port ${config.port}`);
+  });
+}

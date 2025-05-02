@@ -14,6 +14,7 @@ services:
       - '3002:3002'
     environment:
       - PORT=3002
+      - APP_CALLBACK_URL=https://mock-app.ngrok.dev/callback
     networks:
       - sslip.io
     hostname: auth-127-0-0-1.sslip.io
@@ -25,6 +26,8 @@ services:
       - PORT=3000
       - TLS_KEY=/certs/key.pem
       - TLS_CERT=/certs/cert.pem
+      - USE_HTTPS=false // false for ngrok
+      #- IDENTITY_SERVICE_TARGET_DNS=mock-identity.ngrok.dev
     volumes:
       - ./certs:/certs:ro      
     depends_on:
@@ -32,6 +35,21 @@ services:
     networks:
       - sslip.io
     hostname: proxy-127-0-0-1.sslip.io
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    ports:
+      - '4040:4040'    
+    depends_on:
+      - proxy
+    volumes:
+      - ./ngrok.yml:/etc/ngrok/ngrok.yml:ro
+    command:
+      - start
+      - --all
+      - --config=/etc/ngrok/ngrok.yml    
+    networks:
+      - sslip.io      
 networks:
   sslip.io:
     driver: bridge

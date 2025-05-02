@@ -4,4 +4,4 @@ tunnels:
   proxy-tunnel:
     proto: http
     addr: proxy:3000
-    hostname: app-127-0-0-1.ngrok.dev
+    hostname: mock-app.ngrok.dev
