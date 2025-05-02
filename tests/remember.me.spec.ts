@@ -29,7 +29,8 @@ const config = {
     port: 3000,
   },
   rememberMe: true,
-  loginFromCheckout: true
+  loginFromCheckout: true,
+  jumpUrl: 'https://www.staples.com/checkout',
 };
 
 const openidConfigUrl = `${config.ping.baseUrl}/am/oauth2/${config.ping.realm}/.well-known/openid-configuration`;
@@ -103,6 +104,7 @@ test('🔁 Full Auth Flow: Auth Code ➝ Impersonation ➝ Refresh ➝ Cookie Va
     scope: 'openid profile email',
     state,
     nonce,
+    ...(config.jumpUrl ? { jumpUrl: config.jumpUrl } : {}),
     ...(config.loginFromCheckout ? { showGuest: true } : {})
   })}`;
 
