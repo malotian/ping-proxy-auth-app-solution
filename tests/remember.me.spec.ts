@@ -153,6 +153,7 @@ test('🔁 Full Auth Flow: Auth Code ➝ Impersonation ➝ Refresh ➝ Cookie Va
     refresh_token: regularRefreshToken,
     id_token: regularIdToken,
     remember_me: rememberMe,
+    jumpUrl: jumpUrl,
   } = tokenRes.data;
 
   decodeJwt(regularAccessToken, 'Regular Access Token');
@@ -169,6 +170,12 @@ test('🔁 Full Auth Flow: Auth Code ➝ Impersonation ➝ Refresh ➝ Cookie Va
     expect(rememberMe === 'false' || rememberMe === undefined).toBe(true);
   } else {
     expect(rememberMe).toBe('true');
+  }
+
+  if (config.jumpUrl) {
+    expect(jumpUrl).toBe(config.jumpUrl);
+  } else {
+    expect(jumpUrl).toBeUndefined()
   }
 
   if (rememberMe === 'true') {
