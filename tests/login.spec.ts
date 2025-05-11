@@ -4,14 +4,14 @@ import axios from 'axios';
 import qs from 'qs';
 import fs from 'fs';
 import https from 'https';
-import { parse } from 'url';
+import { parse, URL } from 'url'; // Added URL for hostname extraction
 import crypto from 'crypto';
 import path from 'path'; // Added for path manipulation
 
 // ---------- CONFIGURATION ----------
 const config = {
   ping: {
-    baseUrl: 'https://openam-staplesciam-use4-dev.id.forgerock.io',
+    baseUrl: 'https://openam-staplesciam-use4-dev.id.forgerock.io', // Domain to clear cookies for
     realm: 'alpha',
   },
   clients: {
@@ -63,6 +63,29 @@ interface LogFetchTask {
 }
 // let allLogFetchTasks: LogFetchTask[] = []; // Store all transaction IDs to fetch logs for // Replaced by file queue
 
+
+// ---------- COOKIE CLEARING HELPER ----------
+async function clearAllCookiesForConfigDomain(page: Page) {
+  const targetUrl = config.ping.baseUrl;
+  if (!targetUrl) {
+    console.warn('config.ping.baseUrl is not defined. Cannot clear cookies.');
+    return;
+  }
+  // While page.context().clearCookies() clears all cookies for the context,
+  // to be more precise for a specific domain as requested:
+  console.log(`Clearing all cookies for the current browser context (which affects all domains).`);
+  await page.context().clearCookies();
+  // Playwright's `clearCookies()` clears cookies for the entire context.
+  // If you need to be extremely precise and only clear for a specific domain (though clearCookies() is generally sufficient for test isolation):
+  // const cookies = await page.context().cookies([targetUrl]);
+  // for (const cookie of cookies) {
+  //   // Construct a new cookie object with an expiry date in the past.
+  //   // This method is more complex and usually not needed if context.clearCookies() is used.
+  // }
+  console.log(`All cookies for the current browser context have been cleared.`);
+}
+
+
 // ---------- SERVER LIFECYCLE ----------
 test.beforeAll(async () => { // Made async for potential future needs
   console.log(`\n🌐 Starting HTTPS callback server on ${config.server.host}:${config.server.port}`);
@@ -105,7 +128,9 @@ test.afterAll(async () => { // Made async
   // Log queue file processing is handled by the 'Fetch All Collected Logs' test in a separate file.
 });
 
-test.beforeEach(() => {
+test.beforeEach(async ({ page }) => { // Made async to await cookie clearing
+  console.log('\n🧼 Clearing cookies and resetting captured transaction IDs for new test.');
+  await clearAllCookiesForConfigDomain(page);
   capturedTransactionIds = []; // Reset for each test case
 });
 
