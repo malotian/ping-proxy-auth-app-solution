@@ -6,6 +6,7 @@ import fs from 'fs';
 import https from 'https';
 import { parse } from 'url';
 import crypto from 'crypto';
+import path from 'path'; // Added for path manipulation
 
 // ---------- CONFIGURATION ----------
 const config = {
@@ -28,6 +29,14 @@ const config = {
     host: '0.0.0.0',
     port: 3000,
   },
+  monitoringApi: { // Added for monitoring API
+    baseUrl: 'https://openam-staplesciam-use4-dev.id.forgerock.io/monitoring/logs',
+    apiKey: '61d244ee890a4aae6d97f033f905eda2',
+    apiSecret: '38ffee277dc1be87248724aead9e690b08245e97d759826eef1462017d4e9694',
+    source: 'am-everything',
+    pageSize: 1000,
+  },
+  logsDir: 'test-logs', // Added for storing logs
 };
 
 // Permutations of loginType, rememberMe, jumpUrl, showGuest
@@ -45,10 +54,21 @@ const testCases = [
 ];
 
 let server: https.Server & { capturedAuthCode?: string };
+let capturedTransactionIds: string[] = []; // To store all captured transaction IDs per test
+
+interface LogFetchTask {
+  testTitle: string;
+  transactionId: string;
+}
+let allLogFetchTasks: LogFetchTask[] = []; // Store all transaction IDs to fetch logs for
 
 // ---------- SERVER LIFECYCLE ----------
-test.beforeAll(() => {
+test.beforeAll(async () => { // Made async for potential future needs
   console.log(`\n🌐 Starting HTTPS callback server on ${config.server.host}:${config.server.port}`);
+  if (!fs.existsSync(config.logsDir)) {
+    fs.mkdirSync(config.logsDir, { recursive: true });
+    console.log(`📂 Created base logs directory: ${config.logsDir}`);
+  }
   server = https.createServer(
     { key: fs.readFileSync('certs/key.pem'), cert: fs.readFileSync('certs/cert.pem') },
     (req, res) => {
@@ -68,9 +88,14 @@ test.beforeAll(() => {
   );
 });
 
-test.afterAll(() => {
+test.afterAll(async () => { // Made async
   console.log('🛑 Shutting down callback server');
-  server.close();
+  await new Promise<void>(resolve => server.close(() => resolve())); // Ensure server is fully closed
+  console.log('🚪 Callback server shut down.');
+});
+
+test.beforeEach(() => {
+  capturedTransactionIds = []; // Reset for each test case
 });
 
 // ---------- HELPERS ----------
@@ -113,16 +138,16 @@ async function loginAndCaptureCode(
 
   console.log(`\n🚀 Navigating to Auth URL and performing login for ${tc.identifier}`);
   server.capturedAuthCode = undefined;
-  let transactionId: string | undefined;
+  // transactionId is now managed by capturedTransactionIds array
 
   // Attach response listener to capture transaction ID from /authenticate endpoint
   page.on('response', async (response) => {
     const url = response.url();
-    if (url.includes('/authenticate')) {
+    if (url.includes('/authenticate') || url.includes('/sessions?_action=logout')) { // Capture for auth and logout
       const header = response.headers()['x-forgerock-transactionid'];
       if (header) {
-        transactionId = header;
-        console.log(`🆔 Captured x-forgerock-transactionid: ${transactionId}`);
+        console.log(`🆔 Captured x-forgerock-transactionid: ${header} from ${url}`);
+        capturedTransactionIds.push(header);
       }
     }
   });
@@ -158,9 +183,13 @@ async function loginAndCaptureCode(
       if (server.capturedAuthCode) {
         clearTimeout(timeout);
         clearInterval(interval);
+        // Resolve with the first captured transactionId's base, if available
+        const baseTransactionId = capturedTransactionIds.length > 0
+            ? getBaseTransactionId(capturedTransactionIds[0])
+            : undefined;
         resolve({
-          authCode: server.capturedAuthCode,
-          transactionId,
+          authCode: server.capturedAuthCode as string, // Ensure it's a string
+          transactionId: baseTransactionId,
         });
       }
     }, 500);
@@ -201,11 +230,11 @@ function decodeJwt(token: string, label: string) {
     const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
     // Append payload.exp and calculate expiration date
     const exp = payload.exp;
+    
     const expDate = exp ? new Date(exp * 1000) : null;
     console.log(
       `🔍 [JWT] Decoded ${label}:`,
-      payload,
-      exp != null ? `| exp: ${exp} | expDate: ${expDate?.toUTCString()} (${expDate?.toISOString()})` : ''
+      payload
     );
     if (exp) {
       console.log(`⏰ [JWT] Expiration: ${expDate?.toUTCString()} (${expDate?.toISOString()})`);
@@ -215,111 +244,221 @@ function decodeJwt(token: string, label: string) {
   }
 }
 
+// ---------- LOG FETCHING HELPERS (NEW) ----------
+function getBaseTransactionId(fullTransactionId: string): string | undefined {
+  // Extracts the part before "-request-" or "-logout-" or returns if no suffix
+  const match = fullTransactionId.match(/^([a-f0-9-]+)(?:-request-\d+|-logout-\d+)?$/i);
+  return match ? match[1] : undefined;
+}
+
+function sanitizeTestName(testName: string): string {
+  return testName
+    .replace(/Auth Flow \| /g, '')
+    .replace(/ \| /g, '_')
+    .replace(/rememberMe=/g, 'rm-')
+    .replace(/jumpUrl=/g, 'ju-')
+    .replace(/showGuest=/g, 'sg-')
+    .replace(/[^a-zA-Z0-9_.-]/g, '') // Remove invalid chars
+    .slice(0, 100); // Limit length
+}
+
+async function fetchAndSaveLogs(testName: string, baseTransactionId: string) {
+  const sanitizedName = sanitizeTestName(testName);
+  const testLogDir = path.join(config.logsDir, sanitizedName);
+
+  if (!fs.existsSync(testLogDir)) {
+    fs.mkdirSync(testLogDir, { recursive: true });
+    console.log(`📂 Created test case log directory: ${testLogDir}`);
+  }
+
+  const logFileName = `${baseTransactionId}.json`;
+  const logFilePath = path.join(testLogDir, logFileName);
+
+  console.log(`\n📜 Fetching logs for transaction ID: ${baseTransactionId} (Test: ${sanitizedName})`);
+  const logApiUrl = `${config.monitoringApi.baseUrl}?source=${config.monitoringApi.source}&transactionId=${baseTransactionId}&_pageSize=${config.monitoringApi.pageSize}&_prettyPrint=true`;
+
+  try {
+    const response = await axios.request({
+      method: 'get',
+      maxBodyLength: Infinity,
+      url: logApiUrl,
+      headers: {
+        'x-api-key': config.monitoringApi.apiKey,
+        'x-api-secret': config.monitoringApi.apiSecret,
+      }
+    });
+    fs.writeFileSync(logFilePath, JSON.stringify(response.data, null, 2));
+    console.log(`💾 Logs saved to: ${logFilePath} (Test: ${sanitizedName})`);
+  } catch (error: any) {
+    console.error(`❌ Error fetching or saving logs for ${baseTransactionId} (Test: ${sanitizedName}):`);
+    if (error.response) {
+      console.error(`   Status: ${error.response.status}`);
+      console.error(`   Data: ${JSON.stringify(error.response.data)}`);
+    } else {
+      console.error(`   Error: ${error.message}`);
+    }
+    // Optionally save the error to a file
+    fs.writeFileSync(path.join(testLogDir, `${baseTransactionId}-ERROR.txt`), `Error fetching logs for ${testName}:\n${error.stack || error}`);
+  }
+}
 
 
 // ---------- PARAMETRIZED TESTS ----------
 for (const tc of testCases) {
-  test(`Auth Flow | ${tc.loginType} | rememberMe=${tc.rememberMe} | jumpUrl=${tc.jumpUrl ?? 'none'} | showGuest=${tc.showGuest}`, async ({ page }) => {
+  test(`Auth Flow | ${tc.loginType} | rememberMe=${tc.rememberMe} | jumpUrl=${tc.jumpUrl ?? 'none'} | showGuest=${tc.showGuest}`, async ({ page }, testInfo) => { // Added testInfo
     console.log(`\n🎬 Starting test case: ${JSON.stringify(tc)}`);
     const openid = await fetchOpenIDConfig();
     const authUrl = buildAuthUrl(openid.authorization_endpoint, tc);
     const tokenUrl = openid.token_endpoint;
 
-    const { authCode, transactionId } = await loginAndCaptureCode(page, authUrl, tc);
-    console.log(`✅ Received auth code: ${authCode}`);
-    console.log(`📎 Transaction ID: ${transactionId ?? 'Not found'}`);
-    expect(authCode).toBeTruthy();
+    // Test case specific variables
+    let mainTransactionId: string | undefined;
 
-    const tokenRes = await exchangeAuthCode(tokenUrl, authCode);
-    // decode regular tokens
-    decodeJwt(tokenRes.access_token, 'Regular Access Token');
-    decodeJwt(tokenRes.refresh_token, 'Regular Refresh Token');
-    decodeJwt(tokenRes.id_token, 'Regular ID Token');
+    try { // Wrap test logic in try-finally to ensure log fetching
+        const { authCode, transactionId } = await loginAndCaptureCode(page, authUrl, tc);
+        mainTransactionId = transactionId; // Store the primary transaction ID for log fetching
+        console.log(`✅ Received auth code: ${authCode}`);
+        console.log(`📎 Main Transaction ID for logs: ${mainTransactionId ?? 'Not found'}`);
+        expect(authCode).toBeTruthy();
 
-    // assert regular tokens
-    expect(tokenRes.access_token).toBeTruthy();
-    expect(tokenRes.refresh_token).toBeTruthy();
-    expect(tokenRes.id_token).toBeTruthy();
+        const tokenRes = await exchangeAuthCode(tokenUrl, authCode);
+        // decode regular tokens
+        decodeJwt(tokenRes.access_token, 'Regular Access Token');
+        decodeJwt(tokenRes.refresh_token, 'Regular Refresh Token');
+        decodeJwt(tokenRes.id_token, 'Regular ID Token');
 
-    // rememberMe assertion
-    console.log(`🔒 Asserting rememberMe flag: expected=${tc.rememberMe}`);
-    if (tc.rememberMe) {
-      expect(tokenRes.remember_me).toBe('true');
-    } else {
-      expect(tokenRes.remember_me === 'false' || tokenRes.remember_me === undefined).toBe(true);
-    }
+        // assert regular tokens
+        expect(tokenRes.access_token).toBeTruthy();
+        expect(tokenRes.refresh_token).toBeTruthy();
+        expect(tokenRes.id_token).toBeTruthy();
 
-    // jumpUrl assertion
-    console.log(`🚀 Asserting jumpUrl: expected=${tc.jumpUrl}`);
+        // rememberMe assertion
+        console.log(`🔒 Asserting rememberMe flag: expected=${tc.rememberMe}`);
+        if (tc.rememberMe) {
+        expect(tokenRes.remember_me).toBe('true');
+        } else {
+        expect(tokenRes.remember_me === 'false' || tokenRes.remember_me === undefined).toBe(true);
+        }
 
-    if (tc.jumpUrl) {
-      expect(tokenRes.jump_url).toBe(tc.jumpUrl);
-    } else {
-      expect(tokenRes).not.toHaveProperty('jump_url');
-    }
+        // jumpUrl assertion
+        console.log(`🚀 Asserting jumpUrl: expected=${tc.jumpUrl}`);
 
-    // conditional RememberMe token exchange & extended refresh assert
-    if (tc.rememberMe && tokenRes.remember_me === 'true') {
-      console.log('🛡️ Performing RememberMe token exchange for extended session');
-      const rm = await exchangeToken(tokenUrl, {
-        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-        subject_token: tokenRes.access_token,
-        subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-        client_id: config.clients.rememberMe.clientId,
-        client_secret: config.clients.rememberMe.clientSecret,
-        scope: 'transfer openid email profile',
-      });
-      // decode RememberMe tokens
-      decodeJwt(rm.access_token, 'RememberMe Access Token');
-      decodeJwt(rm.refresh_token, 'RememberMe Refresh Token');
-      //decodeJwt(rm.id_token, 'RememberMe ID Token');
+        if (tc.jumpUrl) {
+        expect(tokenRes.jump_url).toBe(tc.jumpUrl);
+        } else {
+        expect(tokenRes).not.toHaveProperty('jump_url');
+        }
 
-      // assert RememberMe tokens
-      expect(rm.access_token).toBeTruthy();
-      expect(rm.refresh_token).toBeTruthy();
-      //expect(rm.id_token).toBeTruthy();
+        // conditional RememberMe token exchange & extended refresh assert
+        if (tc.rememberMe && tokenRes.remember_me === 'true') {
+        console.log('🛡️ Performing RememberMe token exchange for extended session');
+        const rm = await exchangeToken(tokenUrl, {
+            grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+            subject_token: tokenRes.access_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+            client_id: config.clients.rememberMe.clientId,
+            client_secret: config.clients.rememberMe.clientSecret,
+            scope: 'transfer openid email profile',
+        });
+        // decode RememberMe tokens
+        decodeJwt(rm.access_token, 'RememberMe Access Token');
+        decodeJwt(rm.refresh_token, 'RememberMe Refresh Token');
+        //decodeJwt(rm.id_token, 'RememberMe ID Token');
 
-      // assert extended refresh token TTL (~180 days)
-      const payload = JSON.parse(Buffer.from(rm.refresh_token.split('.')[1], 'base64').toString('utf8'));
-      const now = Math.floor(Date.now() / 1000);
-      const ttl = payload.exp - now;
-      console.log(`⏳ RememberMe Refresh Token TTL (seconds): ${ttl}`);
-      expect(ttl).toBeGreaterThan(15500000); // ~180 days
+        // assert RememberMe tokens
+        expect(rm.access_token).toBeTruthy();
+        expect(rm.refresh_token).toBeTruthy();
+        //expect(rm.id_token).toBeTruthy();
 
-      console.log('🔄 Performing RememberMe token refresh');
-      const ref = await exchangeToken(tokenUrl, {
-        grant_type: 'refresh_token',
-        refresh_token: rm.refresh_token,
-        client_id: config.clients.rememberMe.clientId,
-        client_secret: config.clients.rememberMe.clientSecret,
-      });
-      // decode refreshed RememberMe tokens
-      decodeJwt(ref.access_token, 'Refreshed RememberMe Access Token');
-      decodeJwt(ref.id_token, 'Refreshed RememberMe ID Token');
+        // assert extended refresh token TTL (~180 days)
+        const payload = JSON.parse(Buffer.from(rm.refresh_token.split('.')[1], 'base64').toString('utf8'));
+        const now = Math.floor(Date.now() / 1000);
+        const ttl = payload.exp - now;
+        console.log(`⏳ RememberMe Refresh Token TTL (seconds): ${ttl}`);
+        expect(ttl).toBeGreaterThan(15500000); // ~180 days
 
-      // assert refreshed RememberMe tokens
-      expect(ref.access_token).toBeTruthy();
-      expect(ref.id_token).toBeTruthy();
+        console.log('🔄 Performing RememberMe token refresh');
+        const ref = await exchangeToken(tokenUrl, {
+            grant_type: 'refresh_token',
+            refresh_token: rm.refresh_token,
+            client_id: config.clients.rememberMe.clientId,
+            client_secret: config.clients.rememberMe.clientSecret,
+        });
+        // decode refreshed RememberMe tokens
+        decodeJwt(ref.access_token, 'Refreshed RememberMe Access Token');
+        decodeJwt(ref.id_token, 'Refreshed RememberMe ID Token');
+
+        // assert refreshed RememberMe tokens
+        expect(ref.access_token).toBeTruthy();
+        expect(ref.id_token).toBeTruthy();
 
 
-      console.log('🍪 Checking session-jwt cookie');
-      const cookies = await page.context().cookies(config.ping.baseUrl);
-      console.log(`🔑 Retrieved cookies: ${JSON.stringify(cookies)}`);
-      
-      const sessionCookie = cookies.find(c => c.name === 'session-jwt');
-      console.log(`🍪 session-jwt cookie: ${JSON.stringify(sessionCookie)}`);
-      expect(sessionCookie).toBeDefined();
-      expect(sessionCookie?.value).toBeTruthy();
+        console.log('🍪 Checking session-jwt cookie');
+        const cookies = await page.context().cookies(config.ping.baseUrl);
+        console.log(`🔑 Retrieved cookies: ${JSON.stringify(cookies)}`);
+        
+        const sessionCookie = cookies.find(c => c.name === 'session-jwt');
+        console.log(`🍪 session-jwt cookie: ${JSON.stringify(sessionCookie)}`);
+        expect(sessionCookie).toBeDefined();
+        expect(sessionCookie?.value).toBeTruthy();
 
-      const trustedDeviceCookie = cookies.find(c => c.name === 'fr-trusted-device-identifier');
-      console.log(`🍪 fr-trusted-device-identifier cookie: ${JSON.stringify(trustedDeviceCookie)}`);
-      expect(trustedDeviceCookie).toBeDefined();
-      expect(trustedDeviceCookie?.value).toBeTruthy();
+        const trustedDeviceCookie = cookies.find(c => c.name === 'fr-trusted-device-identifier');
+        console.log(`🍪 fr-trusted-device-identifier cookie: ${JSON.stringify(trustedDeviceCookie)}`);
+        expect(trustedDeviceCookie).toBeDefined();
+        expect(trustedDeviceCookie?.value).toBeTruthy();
 
-    } else {
-      console.log('⚠️ Skipping RememberMe extended flows');
+        } else {
+        console.log('⚠️ Skipping RememberMe extended flows');
+        }
+    } finally {
+        // Log fetching is no longer done here. Instead, we collect the info.
+        let idToLog: string | undefined = mainTransactionId;
+        if (!idToLog && capturedTransactionIds.length > 0) {
+            const firstBaseId = getBaseTransactionId(capturedTransactionIds[0]);
+            if (firstBaseId) {
+                console.warn(`⚠️ Main transaction ID not explicitly set for "${testInfo.title}", using first captured base ID: ${firstBaseId} for log collection.`);
+                idToLog = firstBaseId;
+            } else {
+                console.error(`❌ Could not determine a base transaction ID to collect for "${testInfo.title}".`);
+            }
+        }
+
+        if (idToLog) {
+            allLogFetchTasks.push({ testTitle: testInfo.title, transactionId: idToLog });
+            console.log(`📝 Added transaction ID ${idToLog} from test "${testInfo.title}" to log fetching queue.`);
+        } else {
+            console.error(`❌ No transaction ID to add to log fetching queue for test "${testInfo.title}".`);
+        }
     }
 
     console.log(`✅✅ Test completed for: ${JSON.stringify(tc)}`);
   });
 }
+
+// ---------- FINAL TEST CASE FOR LOG FETCHING ----------
+test('Fetch All Collected Logs', async () => {
+  console.log(`\n📜 Starting to fetch all collected logs. Found ${allLogFetchTasks.length} tasks.`);
+  if (allLogFetchTasks.length === 0) {
+    console.log('🤷 No logs to fetch.');
+    return;
+  }
+
+  // Optional: Add a small delay here if logs are not immediately available on the server
+  // after all functional tests have completed.
+  const initialDelayMs = 5000; // 5 seconds
+  console.log(`⏳ Waiting ${initialDelayMs / 1000} seconds before starting log fetching process...`);
+  await new Promise(resolve => setTimeout(resolve, initialDelayMs));
+
+  for (const task of allLogFetchTasks) {
+    console.log(`\n➡️  Fetching logs for test: "${task.testTitle}", Transaction ID: ${task.transactionId}`);
+    try {
+      // You might want a small delay between fetches if the API is rate-limited
+      // await new Promise(resolve => setTimeout(resolve, 500)); // 0.5 second delay
+      await fetchAndSaveLogs(task.testTitle, task.transactionId);
+    } catch (error) {
+      // Log the error but continue with other tasks
+      console.error(`❌❌ Critical error during fetchAndSaveLogs for ${task.transactionId} (Test: ${task.testTitle}):`, error);
+    }
+  }
+  console.log('✅ All scheduled log fetching tasks have been processed.');
+});
