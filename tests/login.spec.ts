@@ -215,14 +215,7 @@ function decodeJwt(token: string, label: string) {
   }
 }
 
-async function assertCookie(page: Page) {
-  console.log('🍪 Checking session-jwt cookie');
-  const cookies = await page.context().cookies(config.ping.baseUrl);
-  const session = cookies.find(c => c.name === 'session-jwt');
-  console.log(`🔑 Retrieved cookies: ${JSON.stringify(cookies)}`);
-  expect(session).toBeDefined();
-  expect(session?.value).toBeTruthy();
-}
+
 
 // ---------- PARAMETRIZED TESTS ----------
 for (const tc of testCases) {
@@ -308,7 +301,21 @@ for (const tc of testCases) {
       expect(ref.access_token).toBeTruthy();
       expect(ref.id_token).toBeTruthy();
 
-      await assertCookie(page);
+
+      console.log('🍪 Checking session-jwt cookie');
+      const cookies = await page.context().cookies(config.ping.baseUrl);
+      console.log(`🔑 Retrieved cookies: ${JSON.stringify(cookies)}`);
+      
+      const sessionCookie = cookies.find(c => c.name === 'session-jwt');
+      console.log(`🍪 session-jwt cookie: ${JSON.stringify(sessionCookie)}`);
+      expect(sessionCookie).toBeDefined();
+      expect(sessionCookie?.value).toBeTruthy();
+
+      const trustedDeviceCookie = cookies.find(c => c.name === 'fr-trusted-device-identifier');
+      console.log(`🍪 fr-trusted-device-identifier cookie: ${JSON.stringify(trustedDeviceCookie)}`);
+      expect(trustedDeviceCookie).toBeDefined();
+      expect(trustedDeviceCookie?.value).toBeTruthy();
+
     } else {
       console.log('⚠️ Skipping RememberMe extended flows');
     }
