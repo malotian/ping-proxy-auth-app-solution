@@ -37,6 +37,7 @@ const config = {
     pageSize: 1000,
   },
   logsDir: 'test-logs', // Added for storing logs
+  logQueueFile: path.join('test-logs', 'log_fetch_queue.json'), // File to store pending log tasks
 };
 
 // Permutations of loginType, rememberMe, jumpUrl, showGuest
@@ -60,7 +61,7 @@ interface LogFetchTask {
   testTitle: string;
   transactionId: string;
 }
-let allLogFetchTasks: LogFetchTask[] = []; // Store all transaction IDs to fetch logs for
+// let allLogFetchTasks: LogFetchTask[] = []; // Store all transaction IDs to fetch logs for // Replaced by file queue
 
 // ---------- SERVER LIFECYCLE ----------
 test.beforeAll(async () => { // Made async for potential future needs
@@ -69,6 +70,15 @@ test.beforeAll(async () => { // Made async for potential future needs
     fs.mkdirSync(config.logsDir, { recursive: true });
     console.log(`📂 Created base logs directory: ${config.logsDir}`);
   }
+  // Initialize/clear the log queue file at the beginning of the test suite
+  try {
+    fs.writeFileSync(config.logQueueFile, JSON.stringify([]), 'utf-8'); // Start with an empty array
+    console.log(`📋 Initialized/Cleared log queue file: ${config.logQueueFile}`);
+  } catch (err) {
+    console.error(`❌ Error initializing log queue file ${config.logQueueFile}:`, err);
+    // Depending on severity, you might want to throw err or handle it
+  }
+
   server = https.createServer(
     { key: fs.readFileSync('certs/key.pem'), cert: fs.readFileSync('certs/cert.pem') },
     (req, res) => {
@@ -92,6 +102,7 @@ test.afterAll(async () => { // Made async
   console.log('🛑 Shutting down callback server');
   await new Promise<void>(resolve => server.close(() => resolve())); // Ensure server is fully closed
   console.log('🚪 Callback server shut down.');
+  // Log queue file processing is handled by the 'Fetch All Collected Logs' test in a separate file.
 });
 
 test.beforeEach(() => {
@@ -230,7 +241,7 @@ function decodeJwt(token: string, label: string) {
     const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
     // Append payload.exp and calculate expiration date
     const exp = payload.exp;
-    
+
     const expDate = exp ? new Date(exp * 1000) : null;
     console.log(
       `🔍 [JWT] Decoded ${label}:`,
@@ -244,61 +255,37 @@ function decodeJwt(token: string, label: string) {
   }
 }
 
-// ---------- LOG FETCHING HELPERS (NEW) ----------
+// ---------- LOG FETCHING HELPERS (NEW - only those needed by auth flows) ----------
 function getBaseTransactionId(fullTransactionId: string): string | undefined {
   // Extracts the part before "-request-" or "-logout-" or returns if no suffix
   const match = fullTransactionId.match(/^([a-f0-9-]+)(?:-request-\d+|-logout-\d+)?$/i);
   return match ? match[1] : undefined;
 }
 
-function sanitizeTestName(testName: string): string {
-  return testName
-    .replace(/Auth Flow \| /g, '')
-    .replace(/ \| /g, '_')
-    .replace(/rememberMe=/g, 'rm-')
-    .replace(/jumpUrl=/g, 'ju-')
-    .replace(/showGuest=/g, 'sg-')
-    .replace(/[^a-zA-Z0-9_.-]/g, '') // Remove invalid chars
-    .slice(0, 100); // Limit length
-}
-
-async function fetchAndSaveLogs(testName: string, baseTransactionId: string) {
-  const sanitizedName = sanitizeTestName(testName);
-  const testLogDir = path.join(config.logsDir, sanitizedName);
-
-  if (!fs.existsSync(testLogDir)) {
-    fs.mkdirSync(testLogDir, { recursive: true });
-    console.log(`📂 Created test case log directory: ${testLogDir}`);
-  }
-
-  const logFileName = `${baseTransactionId}.json`;
-  const logFilePath = path.join(testLogDir, logFileName);
-
-  console.log(`\n📜 Fetching logs for transaction ID: ${baseTransactionId} (Test: ${sanitizedName})`);
-  const logApiUrl = `${config.monitoringApi.baseUrl}?source=${config.monitoringApi.source}&transactionId=${baseTransactionId}&_pageSize=${config.monitoringApi.pageSize}&_prettyPrint=true`;
-
+// Helper to append a task to the queue file
+function appendTaskToLogQueue(task: LogFetchTask) {
   try {
-    const response = await axios.request({
-      method: 'get',
-      maxBodyLength: Infinity,
-      url: logApiUrl,
-      headers: {
-        'x-api-key': config.monitoringApi.apiKey,
-        'x-api-secret': config.monitoringApi.apiSecret,
+    let tasks: LogFetchTask[] = [];
+    if (fs.existsSync(config.logQueueFile)) {
+      const fileContent = fs.readFileSync(config.logQueueFile, 'utf-8');
+      if (fileContent.trim() !== '') { // Ensure file is not empty before parsing
+        try {
+            tasks = JSON.parse(fileContent);
+            if (!Array.isArray(tasks)) { // Basic validation that it's an array
+                console.warn(`⚠️ Log queue file ${config.logQueueFile} does not contain a valid JSON array. Re-initializing for this append.`);
+                tasks = []; // If not an array, start fresh for this operation
+            }
+        } catch (parseError) {
+            console.error(`❌ Error parsing log queue file ${config.logQueueFile}. Re-initializing for this append. Error:`, parseError);
+            tasks = []; // Re-initialize if parsing fails
+        }
       }
-    });
-    fs.writeFileSync(logFilePath, JSON.stringify(response.data, null, 2));
-    console.log(`💾 Logs saved to: ${logFilePath} (Test: ${sanitizedName})`);
-  } catch (error: any) {
-    console.error(`❌ Error fetching or saving logs for ${baseTransactionId} (Test: ${sanitizedName}):`);
-    if (error.response) {
-      console.error(`   Status: ${error.response.status}`);
-      console.error(`   Data: ${JSON.stringify(error.response.data)}`);
-    } else {
-      console.error(`   Error: ${error.message}`);
     }
-    // Optionally save the error to a file
-    fs.writeFileSync(path.join(testLogDir, `${baseTransactionId}-ERROR.txt`), `Error fetching logs for ${testName}:\n${error.stack || error}`);
+    tasks.push(task);
+    fs.writeFileSync(config.logQueueFile, JSON.stringify(tasks, null, 2), 'utf-8'); // Pretty print for readability
+    console.log(`📝 Appended task for TID ${task.transactionId} (Test: "${task.testTitle}") to ${config.logQueueFile}`);
+  } catch (err) {
+    console.error(`❌ Error appending task to log queue file ${config.logQueueFile}:`, err);
   }
 }
 
@@ -396,7 +383,7 @@ for (const tc of testCases) {
         console.log('🍪 Checking session-jwt cookie');
         const cookies = await page.context().cookies(config.ping.baseUrl);
         console.log(`🔑 Retrieved cookies: ${JSON.stringify(cookies)}`);
-        
+
         const sessionCookie = cookies.find(c => c.name === 'session-jwt');
         console.log(`🍪 session-jwt cookie: ${JSON.stringify(sessionCookie)}`);
         expect(sessionCookie).toBeDefined();
@@ -424,8 +411,9 @@ for (const tc of testCases) {
         }
 
         if (idToLog) {
-            allLogFetchTasks.push({ testTitle: testInfo.title, transactionId: idToLog });
-            console.log(`📝 Added transaction ID ${idToLog} from test "${testInfo.title}" to log fetching queue.`);
+            // allLogFetchTasks.push({ testTitle: testInfo.title, transactionId: idToLog }); // Old way
+            // console.log(`📝 Added transaction ID ${idToLog} from test "${testInfo.title}" to log fetching queue.`); // Old way
+            appendTaskToLogQueue({ testTitle: testInfo.title, transactionId: idToLog });
         } else {
             console.error(`❌ No transaction ID to add to log fetching queue for test "${testInfo.title}".`);
         }
@@ -435,30 +423,6 @@ for (const tc of testCases) {
   });
 }
 
-// ---------- FINAL TEST CASE FOR LOG FETCHING ----------
-test('Fetch All Collected Logs', async () => {
-  console.log(`\n📜 Starting to fetch all collected logs. Found ${allLogFetchTasks.length} tasks.`);
-  if (allLogFetchTasks.length === 0) {
-    console.log('🤷 No logs to fetch.');
-    return;
-  }
-
-  // Optional: Add a small delay here if logs are not immediately available on the server
-  // after all functional tests have completed.
-  const initialDelayMs = 5000; // 5 seconds
-  console.log(`⏳ Waiting ${initialDelayMs / 1000} seconds before starting log fetching process...`);
-  await new Promise(resolve => setTimeout(resolve, initialDelayMs));
-
-  for (const task of allLogFetchTasks) {
-    console.log(`\n➡️  Fetching logs for test: "${task.testTitle}", Transaction ID: ${task.transactionId}`);
-    try {
-      // You might want a small delay between fetches if the API is rate-limited
-      // await new Promise(resolve => setTimeout(resolve, 500)); // 0.5 second delay
-      await fetchAndSaveLogs(task.testTitle, task.transactionId);
-    } catch (error) {
-      // Log the error but continue with other tasks
-      console.error(`❌❌ Critical error during fetchAndSaveLogs for ${task.transactionId} (Test: ${task.testTitle}):`, error);
-    }
-  }
-  console.log('✅ All scheduled log fetching tasks have been processed.');
-});
+// ---------- FINAL TEST CASE FOR LOG FETCHING (MOVED TO fetch-logs.spec.ts) ----------
+// The 'Fetch All Collected Logs' test case and its specific helpers (fetchAndSaveLogs, sanitizeTestName)
+// have been moved to a separate file: fetch-logs.spec.ts
