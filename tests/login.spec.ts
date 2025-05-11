@@ -33,15 +33,15 @@ const config = {
 // Permutations of loginType, rememberMe, jumpUrl, showGuest
 const testCases = [
   // email scenarios
-  { loginType: 'email',    identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: true,  jumpUrl: 'https://www.staples.com/checkout', showGuest: true  },
-  { loginType: 'email',    identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: true,  jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
-  { loginType: 'email',    identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined,                 showGuest: true  },
-  { loginType: 'email',    identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined,                 showGuest: false },
+  { loginType: 'email', identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
+  { loginType: 'email', identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
+  { loginType: 'email', identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: true },
+  { loginType: 'email', identifier: 'user@example.com', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: false },
   // username scenarios
-  { loginType: 'username', identifier: 'playwright',       password: 'P@$$w0rd@123', rememberMe: true,  jumpUrl: 'https://www.staples.com/checkout', showGuest: true  },
-  { loginType: 'username', identifier: 'playwright',       password: 'P@$$w0rd@123', rememberMe: true,  jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
-  { loginType: 'username', identifier: 'playwright',       password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined,                 showGuest: true  },
-  { loginType: 'username', identifier: 'playwright',       password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined,                 showGuest: false },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: true },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: false },
 ];
 
 let server: https.Server & { capturedAuthCode?: string };
@@ -94,6 +94,7 @@ function buildAuthUrl(authEndpoint: string, tc: typeof testCases[0]) {
     state,
     nonce,
     showGuest: tc.showGuest,
+    acr_values: '__staples_h_device_profile'
   };
   if (tc.jumpUrl) {
     params.jumpUrl = tc.jumpUrl;
@@ -104,9 +105,28 @@ function buildAuthUrl(authEndpoint: string, tc: typeof testCases[0]) {
   return url;
 }
 
-async function loginAndCaptureCode(page: Page, authUrl: string, tc: typeof testCases[0]): Promise<string> {
+async function loginAndCaptureCode(
+  page: Page,
+  authUrl: string,
+  tc: typeof testCases[0]
+): Promise<{ authCode: string; transactionId?: string }> {
+
   console.log(`\n🚀 Navigating to Auth URL and performing login for ${tc.identifier}`);
   server.capturedAuthCode = undefined;
+  let transactionId: string | undefined;
+
+  // Attach response listener to capture transaction ID from /authenticate endpoint
+  page.on('response', async (response) => {
+    const url = response.url();
+    if (url.includes('/authenticate')) {
+      const header = response.headers()['x-forgerock-transactionid'];
+      if (header) {
+        transactionId = header;
+        console.log(`🆔 Captured x-forgerock-transactionid: ${transactionId}`);
+      }
+    }
+  });
+
   await page.goto(authUrl);
 
   if (tc.showGuest) {
@@ -127,6 +147,7 @@ async function loginAndCaptureCode(page: Page, authUrl: string, tc: typeof testC
     console.log('🗑️  Unchecking Remember Me');
     await page.getByTestId('fr-field-Keep me logged in').locator('label').click();
   }
+
   console.log('↩️  Submitting credentials');
   await page.getByTestId('fr-field-callback_2').getByTestId('input-').press('Enter');
 
@@ -137,7 +158,10 @@ async function loginAndCaptureCode(page: Page, authUrl: string, tc: typeof testC
       if (server.capturedAuthCode) {
         clearTimeout(timeout);
         clearInterval(interval);
-        resolve(server.capturedAuthCode as string);
+        resolve({
+          authCode: server.capturedAuthCode,
+          transactionId,
+        });
       }
     }, 500);
   });
@@ -208,11 +232,12 @@ for (const tc of testCases) {
     const authUrl = buildAuthUrl(openid.authorization_endpoint, tc);
     const tokenUrl = openid.token_endpoint;
 
-    const code = await loginAndCaptureCode(page, authUrl, tc);
-    console.log(`✅ Received auth code: ${code}`);
-    expect(code).toBeTruthy();
+    const { authCode, transactionId } = await loginAndCaptureCode(page, authUrl, tc);
+    console.log(`✅ Received auth code: ${authCode}`);
+    console.log(`📎 Transaction ID: ${transactionId ?? 'Not found'}`);
+    expect(authCode).toBeTruthy();
 
-    const tokenRes = await exchangeAuthCode(tokenUrl, code);
+    const tokenRes = await exchangeAuthCode(tokenUrl, authCode);
     // decode regular tokens
     decodeJwt(tokenRes.access_token, 'Regular Access Token');
     decodeJwt(tokenRes.refresh_token, 'Regular Refresh Token');
@@ -233,10 +258,11 @@ for (const tc of testCases) {
 
     // jumpUrl assertion
     console.log(`🚀 Asserting jumpUrl: expected=${tc.jumpUrl}`);
+
     if (tc.jumpUrl) {
-      expect(tokenRes.jumpUrl).toBe(tc.jumpUrl);
+      expect(tokenRes.jump_url).toBe(tc.jumpUrl);
     } else {
-      expect(tokenRes.jumpUrl).toBeUndefined();
+      expect(tokenRes).not.toHaveProperty('jump_url');
     }
 
     // conditional RememberMe token exchange & extended refresh assert
