@@ -27,7 +27,7 @@ function sanitizeTestName(testName: string): string {
   return testName
     .replace(/Auth Flow \| /g, '')
     .replace(/ \| /g, '_')
-    .replace(/rememberMe=/g, 'rm-')
+    .replace(/keepMeLoggedIn=/g, 'rm-')
     .replace(/jumpUrl=/g, 'ju-')
     .replace(/showGuest=/g, 'sg-')
     .replace(/[^a-zA-Z0-9_.-]/g, '') // Remove invalid chars

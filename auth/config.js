@@ -18,8 +18,8 @@ module.exports = {
   // OAuth2 client credentials
   idaasClientID:             process.env.PING_CLIENT_ID               || 'staples_dotcom_application_client_id',
   idaasClientSecret:         process.env.PING_CLIENT_SECRET           || 'staples_dotcom_application_client_secret',
-  idaasRememberClientID:     process.env.PING_REMEMBER_CLIENT_ID      || 'staples_dotcom_application_remember_me_client_id',
-  idaasRememberClientSecret: process.env.PING_REMEMBER_CLIENT_SECRET  || 'staples_dotcom_application_remember_me_client_secret',
+  idaasKeepMeLoggedInClientID:     process.env.PING_REMEMBER_CLIENT_ID      || 'staples_dotcom_application_remember_me_client_id',
+  idaasKeepMeLoggedInClientSecret: process.env.PING_REMEMBER_CLIENT_SECRET  || 'staples_dotcom_application_remember_me_client_secret',
   
   // App callback endpoint
   appCallbackEndpoint:  `${externalApplicationBaseUrl}/callback`,

@@ -22,9 +22,9 @@ test('login.with.username', async ({ page }) => {
 
   await expect(page.getByText('"AccessToken"')).toBeVisible();
   await expect(page.getByText('"RefreshToken"')).toBeVisible();
-  await expect(page.getByText('"RememberMe"')).toBeVisible();
+  await expect(page.getByText('"KeepMeLoggedIn"')).toBeVisible();
   await expect(page.getByText('"StateID"')).toBeVisible();
-  await expect(page.getByText('"RememberMe"')).toBeVisible();
+  await expect(page.getByText('"KeepMeLoggedIn"')).toBeVisible();
   await expect(page.getByText('"TargetUrl"')).toBeVisible();
   await expect(page.locator('andypf-json-viewer')).toContainText('"staples-kid"');
   await expect(page.getByText('"OriginalAccessToken"')).toBeVisible();
@@ -53,9 +53,9 @@ test('login.with.email', async ({ page }) => {
 
   await expect(page.getByText('"AccessToken"')).toBeVisible();
   await expect(page.getByText('"RefreshToken"')).toBeVisible();
-  await expect(page.getByText('"RememberMe"')).toBeVisible();
+  await expect(page.getByText('"KeepMeLoggedIn"')).toBeVisible();
   await expect(page.getByText('"StateID"')).toBeVisible();
-  await expect(page.getByText('"RememberMe"')).toBeVisible();
+  await expect(page.getByText('"KeepMeLoggedIn"')).toBeVisible();
   await expect(page.getByText('"TargetUrl"')).toBeVisible();
   await expect(page.locator('andypf-json-viewer')).toContainText('"staples-kid"');
   await expect(page.getByText('"OriginalAccessToken"')).toBeVisible();

@@ -129,8 +129,8 @@ async function refreshTokenThrice(refreshToken, correlationId) {
         qs.stringify({
           grant_type: "refresh_token",
           refresh_token: refreshToken,
-          client_id: config.idaasRememberClientID,
-          client_secret: config.idaasRememberClientSecret,
+          client_id: config.idaasKeepMeLoggedInClientID,
+          client_secret: config.idaasKeepMeLoggedInClientSecret,
         }),
         { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
       );
@@ -214,32 +214,32 @@ app.post("/advice", async (req, res) => {
           logger.info("Token exchange successful", { correlationId, tokenResponse: tokenResponse.data });
           let finalTokenResponse = tokenResponse;
 
-          // If remember_me flag is true, make an additional token exchange call
-          if (tokenResponse.data.remember_me) {
-            let tokenResponseRememberMe = await axios.post(
+          // If keep_me_logged_in flag is true, make an additional token exchange call
+          if (tokenResponse.data.keep_me_logged_in) {
+            let tokenResponseKeepMeLoggedIn = await axios.post(
               config.idaasAccessTokenEndpoint,
               qs.stringify({
                 grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
                 scope: "transfer openid",
-                client_id: config.idaasRememberClientID,
-                client_secret: config.idaasRememberClientSecret,
+                client_id: config.idaasKeepMeLoggedInClientID,
+                client_secret: config.idaasKeepMeLoggedInClientSecret,
                 subject_token: tokenResponse.data.access_token,
                 subject_token_type: "urn:ietf:params:oauth:token-type:access_token"
               }),
               { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
             );
-            logger.info("Token exchange (remember_me) successful", {correlationId, tokenResponseRememberMe: tokenResponseRememberMe.data});
-            tokenResponseRememberMe.data.remember_me = true;
+            logger.info("Token exchange (keep_me_logged_in) successful", {correlationId, tokenResponseKeepMeLoggedIn: tokenResponseKeepMeLoggedIn.data});
+            tokenResponseKeepMeLoggedIn.data.keep_me_logged_in = true;
 
-            finalTokenResponse.data.access_token = tokenResponseRememberMe.data.access_token;
-            finalTokenResponse.data.id_token = tokenResponseRememberMe.data.id_token;
-            finalTokenResponse.data.refresh_token = tokenResponseRememberMe.data.refresh_token;
-            finalTokenResponse.data.remember_me = true;
+            finalTokenResponse.data.access_token = tokenResponseKeepMeLoggedIn.data.access_token;
+            finalTokenResponse.data.id_token = tokenResponseKeepMeLoggedIn.data.id_token;
+            finalTokenResponse.data.refresh_token = tokenResponseKeepMeLoggedIn.data.refresh_token;
+            finalTokenResponse.data.keep_me_logged_in = true;
 
 
             // multi refresh test
             // const latestRefreshTokenResponseRemeberMe = await refreshTokenThrice(
-            //   tokenResponseRememberMe.data.refresh_token,
+            //   tokenResponseKeepMeLoggedIn.data.refresh_token,
             //   correlationId
             // );          
 
@@ -260,11 +260,11 @@ app.post("/advice", async (req, res) => {
             IdToken: finalTokenResponse.data.id_token,
             RefreshToken: finalTokenResponse.data.refresh_token,
             FingerPrint: deviceId,
-            RememberMe: finalTokenResponse.data.remember_me || false,
+            KeepMeLoggedIn: finalTokenResponse.data.keep_me_logged_in || false,
             StateID,
             NonceID,
             TargetUrl,
-            ...(tokenResponse.data.remember_me
+            ...(tokenResponse.data.keep_me_logged_in
               ? {
                   OriginalAccessToken: tokenResponse.data.access_token,
                   OriginalIdToken:    tokenResponse.data.id_token,
@@ -310,7 +310,7 @@ app.post("/advice", async (req, res) => {
                 session.AccessToken = refreshResponse.data.access_token;
                 session.IdToken = refreshResponse.data.id_token;
                 session.RefreshToken = refreshResponse.data.refresh_token;
-                session.RememberMe = refreshResponse.data.remember_me || false;
+                session.KeepMeLoggedIn = refreshResponse.data.keep_me_logged_in || false;
                 session.FingerPrint = deviceId; // Update fingerprint if needed
                 logger.info("Session successfully refreshed", { correlationId, SessionID: sessionId, session });
               } catch (err) {
@@ -334,7 +334,7 @@ app.post("/advice", async (req, res) => {
     if (session && session.AccessToken) {
       logger.info("Session valid. Proceeding to generate JWT", { correlationId, SessionID: session.SessionID });
       const jwtToken = buildStaplesJWT(session);
-      logger.info("JWT built and session authenticated", { correlationId, RememberMe: session.RememberMe });
+      logger.info("JWT built and session authenticated", { correlationId, KeepMeLoggedIn: session.KeepMeLoggedIn });
       return res.json({
         adviceHeaders: {
           HTTP_STAPLES_JWT: jwtToken,

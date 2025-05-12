@@ -97,11 +97,11 @@ app.get("/login", (req, res) => {
     }
 
     logger.info("JWT verified successfully in /login", { correlationId, decoded });
-    const rememberMe = decoded.RememberMe === true;
+    const keepMeLoggedIn = decoded.KeepMeLoggedIn === true;
     const cookieOptions = {
       httpOnly: true,
       secure: false,
-      ...(rememberMe ? { maxAge: 180 * 24 * 60 * 60 * 1000 } : {}), // Persistent cookie if applicable.
+      ...(keepMeLoggedIn ? { maxAge: 180 * 24 * 60 * 60 * 1000 } : {}), // Persistent cookie if applicable.
     };
 
     // Set session cookie as per sequence diagram instructions.
@@ -109,7 +109,7 @@ app.get("/login", (req, res) => {
     logger.info("Session cookie set in /login", {
       correlationId,
       sessionId: staplesSessionId,
-      rememberMe,
+      keepMeLoggedIn,
       cookieOptions,
     });
 
@@ -138,11 +138,11 @@ app.get("/callback", async (req, res) => {
       }
 
       logger.info("JWT verified successfully in /callback", { correlationId, decoded });
-      const rememberMe = decoded.RememberMe === true;
+      const keepMeLoggedIn = decoded.KeepMeLoggedIn === true;
       const cookieOptions = {
         httpOnly: true,
         secure: false,
-        ...(rememberMe ? { maxAge: 180 * 24 * 60 * 60 * 1000 } : {}), // Persistent cookie if applicable.
+        ...(keepMeLoggedIn ? { maxAge: 180 * 24 * 60 * 60 * 1000 } : {}), // Persistent cookie if applicable.
       };
 
       // Set session cookie as per sequence diagram instructions.
@@ -150,7 +150,7 @@ app.get("/callback", async (req, res) => {
       logger.info("Session cookie set in /callback", {
         correlationId,
         sessionId: staplesSessionId,
-        rememberMe,
+        keepMeLoggedIn,
         cookieOptions,
       });
 

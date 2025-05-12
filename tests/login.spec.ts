@@ -19,7 +19,7 @@ const config = {
       clientId: 'staples_dotcom_application_client_id',
       clientSecret: 'staples_dotcom_application_client_secret',
     },
-    rememberMe: {
+    keepMeLoggedIn: {
       clientId: 'staples_dotcom_application_remember_me_client_id',
       clientSecret: 'staples_dotcom_application_remember_me_client_secret',
     },
@@ -40,18 +40,18 @@ const config = {
   logQueueFile: path.join('test-logs', 'log_fetch_queue.json'), // File to store pending log tasks
 };
 
-// Permutations of loginType, rememberMe, jumpUrl, showGuest
+// Permutations of loginType, keepMeLoggedIn, jumpUrl, showGuest
 const testCases = [
   // email scenarios
-  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
-  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
-  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: true },
-  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: false },
+  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
+  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
+  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: true },
+  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: false },
   // username scenarios
-  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
-  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
-  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: true },
-  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', rememberMe: false, jumpUrl: undefined, showGuest: false },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: true },
+  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: false },
 ];
 
 let server: https.Server & { capturedAuthCode?: string };
@@ -144,7 +144,7 @@ async function fetchOpenIDConfig() {
 }
 
 function buildAuthUrl(authEndpoint: string, tc: typeof testCases[0]) {
-  console.log(`\n🔐 Building auth URL for loginType=${tc.loginType}, rememberMe=${tc.rememberMe}, jumpUrl=${tc.jumpUrl}`);
+  console.log(`\n🔐 Building auth URL for loginType=${tc.loginType}, keepMeLoggedIn=${tc.keepMeLoggedIn}, jumpUrl=${tc.jumpUrl}`);
   const state = crypto.randomBytes(16).toString('hex');
   const nonce = crypto.randomBytes(16).toString('hex');
   const params: Record<string, any> = {
@@ -204,8 +204,8 @@ async function loginAndCaptureCode(
   await page.getByTestId('fr-field-callback_1').getByTestId('input-').fill(tc.identifier);
   await page.getByTestId('fr-field-callback_2').getByTestId('input-').fill(tc.password);
 
-  if (!tc.rememberMe) {
-    console.log('🗑️  Unchecking Remember Me');
+  if (!tc.keepMeLoggedIn) {
+    console.log('🗑️  Unchecking Keep Me Logged In');
     await page.getByTestId('fr-field-Keep me logged in').locator('label').click();
   }
 
@@ -317,7 +317,7 @@ function appendTaskToLogQueue(task: LogFetchTask) {
 
 // ---------- PARAMETRIZED TESTS ----------
 for (const tc of testCases) {
-  test(`Auth Flow | ${tc.loginType} | rememberMe=${tc.rememberMe} | jumpUrl=${tc.jumpUrl ?? 'none'} | showGuest=${tc.showGuest}`, async ({ page }, testInfo) => { // Added testInfo
+  test(`Auth Flow | ${tc.loginType} | keepMeLoggedIn=${tc.keepMeLoggedIn} | jumpUrl=${tc.jumpUrl ?? 'none'} | showGuest=${tc.showGuest}`, async ({ page }, testInfo) => { // Added testInfo
     console.log(`\n🎬 Starting test case: ${JSON.stringify(tc)}`);
     const openid = await fetchOpenIDConfig();
     const authUrl = buildAuthUrl(openid.authorization_endpoint, tc);
@@ -333,76 +333,76 @@ for (const tc of testCases) {
         console.log(`📎 Main Transaction ID for logs: ${mainTransactionId ?? 'Not found'}`);
         expect(authCode).toBeTruthy();
 
-        const tokenRes = await exchangeAuthCode(tokenUrl, authCode);
+        const regularTokenResponse = await exchangeAuthCode(tokenUrl, authCode);
         // decode regular tokens
-        decodeJwt(tokenRes.access_token, 'Regular Access Token');
-        decodeJwt(tokenRes.refresh_token, 'Regular Refresh Token');
-        decodeJwt(tokenRes.id_token, 'Regular ID Token');
+        decodeJwt(regularTokenResponse.access_token, 'Regular Access Token');
+        decodeJwt(regularTokenResponse.refresh_token, 'Regular Refresh Token');
+        decodeJwt(regularTokenResponse.id_token, 'Regular ID Token');
 
         // assert regular tokens
-        expect(tokenRes.access_token).toBeTruthy();
-        expect(tokenRes.refresh_token).toBeTruthy();
-        expect(tokenRes.id_token).toBeTruthy();
+        expect(regularTokenResponse.access_token).toBeTruthy();
+        expect(regularTokenResponse.refresh_token).toBeTruthy();
+        expect(regularTokenResponse.id_token).toBeTruthy();
 
-        // rememberMe assertion
-        console.log(`🔒 Asserting rememberMe flag: expected=${tc.rememberMe}`);
-        if (tc.rememberMe) {
-        expect(tokenRes.remember_me).toBe('true');
+        // keepMeLoggedIn assertion
+        console.log(`🔒 Asserting keepMeLoggedIn flag: expected=${tc.keepMeLoggedIn}`);
+        if (tc.keepMeLoggedIn) {
+        expect(regularTokenResponse.keep_me_logged_in).toBe('true');
         } else {
-        expect(tokenRes.remember_me === 'false' || tokenRes.remember_me === undefined).toBe(true);
+        expect(regularTokenResponse.keep_me_logged_in === 'false' || regularTokenResponse.keep_me_logged_in === undefined).toBe(true);
         }
 
         // jumpUrl assertion
         console.log(`🚀 Asserting jumpUrl: expected=${tc.jumpUrl}`);
 
         if (tc.jumpUrl) {
-        expect(tokenRes.jump_url).toBe(tc.jumpUrl);
+        expect(regularTokenResponse.jump_url).toBe(tc.jumpUrl);
         } else {
-        expect(tokenRes).not.toHaveProperty('jump_url');
+        expect(regularTokenResponse).not.toHaveProperty('jump_url');
         }
 
-        // conditional RememberMe token exchange & extended refresh assert
-        if (tc.rememberMe && tokenRes.remember_me === 'true') {
-        console.log('🛡️ Performing RememberMe token exchange for extended session');
-        const rm = await exchangeToken(tokenUrl, {
+        // conditional KeepMeLoggedIn token exchange & extended refresh assert
+        if (tc.keepMeLoggedIn && regularTokenResponse.keep_me_logged_in === 'true') {
+        console.log('🛡️ Performing KeepMeLoggedIn token exchange for extended session');
+        const keepMeLoggedInResponse = await exchangeToken(tokenUrl, {
             grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-            subject_token: tokenRes.access_token,
+            subject_token: regularTokenResponse.access_token,
             subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-            client_id: config.clients.rememberMe.clientId,
-            client_secret: config.clients.rememberMe.clientSecret,
+            client_id: config.clients.keepMeLoggedIn.clientId,
+            client_secret: config.clients.keepMeLoggedIn.clientSecret,
             scope: 'transfer openid email profile',
         });
-        // decode RememberMe tokens
-        decodeJwt(rm.access_token, 'RememberMe Access Token');
-        decodeJwt(rm.refresh_token, 'RememberMe Refresh Token');
-        //decodeJwt(rm.id_token, 'RememberMe ID Token');
+        // decode KeepMeLoggedIn tokens
+        decodeJwt(keepMeLoggedInResponse.access_token, 'KeepMeLoggedIn Access Token');
+        decodeJwt(keepMeLoggedInResponse.refresh_token, 'KeepMeLoggedIn Refresh Token');
+        //decodeJwt(rm.id_token, 'KeepMeLoggedIn ID Token');
 
-        // assert RememberMe tokens
-        expect(rm.access_token).toBeTruthy();
-        expect(rm.refresh_token).toBeTruthy();
+        // assert KeepMeLoggedIn tokens
+        expect(keepMeLoggedInResponse.access_token).toBeTruthy();
+        expect(keepMeLoggedInResponse.refresh_token).toBeTruthy();
         //expect(rm.id_token).toBeTruthy();
 
         // assert extended refresh token TTL (~180 days)
-        const payload = JSON.parse(Buffer.from(rm.refresh_token.split('.')[1], 'base64').toString('utf8'));
+        const payload = JSON.parse(Buffer.from(keepMeLoggedInResponse.refresh_token.split('.')[1], 'base64').toString('utf8'));
         const now = Math.floor(Date.now() / 1000);
         const ttl = payload.exp - now;
-        console.log(`⏳ RememberMe Refresh Token TTL (seconds): ${ttl}`);
+        console.log(`⏳ KeepMeLoggedIn Refresh Token TTL (seconds): ${ttl}`);
         expect(ttl).toBeGreaterThan(15500000); // ~180 days
 
-        console.log('🔄 Performing RememberMe token refresh');
-        const ref = await exchangeToken(tokenUrl, {
+        console.log('🔄 Performing KeepMeLoggedIn token refresh');
+        const refreshedKeepMeLoggedInResponse = await exchangeToken(tokenUrl, {
             grant_type: 'refresh_token',
-            refresh_token: rm.refresh_token,
-            client_id: config.clients.rememberMe.clientId,
-            client_secret: config.clients.rememberMe.clientSecret,
+            refresh_token: keepMeLoggedInResponse.refresh_token,
+            client_id: config.clients.keepMeLoggedIn.clientId,
+            client_secret: config.clients.keepMeLoggedIn.clientSecret,
         });
-        // decode refreshed RememberMe tokens
-        decodeJwt(ref.access_token, 'Refreshed RememberMe Access Token');
-        decodeJwt(ref.id_token, 'Refreshed RememberMe ID Token');
+        // decode refreshed KeepMeLoggedIn tokens
+        decodeJwt(refreshedKeepMeLoggedInResponse.access_token, 'Refreshed KeepMeLoggedIn Access Token');
+        decodeJwt(refreshedKeepMeLoggedInResponse.id_token, 'Refreshed KeepMeLoggedIn ID Token');
 
-        // assert refreshed RememberMe tokens
-        expect(ref.access_token).toBeTruthy();
-        expect(ref.id_token).toBeTruthy();
+        // assert refreshed KeepMeLoggedIn tokens
+        expect(refreshedKeepMeLoggedInResponse.access_token).toBeTruthy();
+        expect(refreshedKeepMeLoggedInResponse.id_token).toBeTruthy();
 
 
         console.log('🍪 Checking session-jwt cookie');
@@ -420,7 +420,7 @@ for (const tc of testCases) {
         expect(trustedDeviceCookie?.value).toBeTruthy();
 
         } else {
-        console.log('⚠️ Skipping RememberMe extended flows');
+        console.log('⚠️ Skipping KeepMeLoggedIn extended flows');
         }
     } finally {
         // Log fetching is no longer done here. Instead, we collect the info.
