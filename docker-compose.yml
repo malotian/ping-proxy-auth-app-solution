@@ -47,7 +47,7 @@ services:
     depends_on:
       - proxy
     volumes:
-      - ./ngrok.yml:/etc/ngrok/ngrok.yml:ro
+      - ./ngrok/ngrok.yml:/etc/ngrok/ngrok.yml:ro
     command:
       - start
       - --all
