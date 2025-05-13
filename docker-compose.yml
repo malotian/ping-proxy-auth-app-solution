@@ -2,7 +2,7 @@ services:
   app:
     build: ./app
     ports:
-      - '3001:3001'
+      - "3001:3001"
     environment:
       - PORT=3001
     networks:
@@ -11,20 +11,20 @@ services:
   auth:
     build: ./auth
     ports:
-      - '3002:3002'
+      - "3002:3002"
     environment:
       - PORT=3002
       - EXTERNAL_APPLICATION_BASE_URL=https://mock-app.ngrok.dev
       - INTERNAL_IDENTITY_SERVICE_BASE_URL=https://mock-identity.ngrok.dev
       - EXTERNAL_IDENTITY_SERVICE_BASE_URL=https://openam-staplesciam-use4-dev.id.forgerock.io
-      - PING_REALM=alpha      
+      - PING_REALM=alpha
     networks:
       - sslip.io
     hostname: auth-127-0-0-1.sslip.io
   proxy:
     build: ./proxy
     ports:
-      - '3000:3000'
+      - "3000:3000"
     environment:
       - PORT=3000
       - TLS_KEY=/certs/key.pem
@@ -34,17 +34,16 @@ services:
       - EXTERNAL_IDENTITY_SERVICE_BASE_URL,=https://openam-staplesciam-use4-dev.id.forgerock.io
       - PING_REALM=alpha
     volumes:
-      - ./certs:/certs:ro      
+      - ./certs:/certs:ro
     depends_on:
       - app
     networks:
       - sslip.io
     hostname: proxy-127-0-0-1.sslip.io
-
   ngrok:
     image: ngrok/ngrok:latest
     ports:
-      - '4040:4040'    
+      - "4040:4040"
     depends_on:
       - proxy
     volumes:
@@ -52,9 +51,9 @@ services:
     command:
       - start
       - --all
-      - --config=/etc/ngrok/ngrok.yml    
+      - --config=/etc/ngrok/ngrok.yml
     networks:
-      - sslip.io      
+      - sslip.io
 networks:
   sslip.io:
     driver: bridge
