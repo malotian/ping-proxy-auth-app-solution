@@ -113,3 +113,4 @@ dist
 key.jwk
 others/others/service-account-id-to-token.sh
 others/others/payload.json
+others/others/jwt.txt
