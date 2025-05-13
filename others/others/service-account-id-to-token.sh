@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-SERVICE_ACCOUNT_ID=b45199f5-9351-4fd5-a343-6a90ec17f875
+SERVICE_ACCOUNT_ID=36e073e4-fa88-4fd1-a0af-73fd825c7cbf
 AUD=https://openam-staplesciam-use4-dev.id.forgerock.io/am/oauth2/access_token
-SCOPE=fr:am:*
+SCOPE=fr:idc:proxy-connect:*
 
 # Exit immediately if a command exits with a non-zero status.
 set -e
@@ -24,8 +24,8 @@ command -v jq >/dev/null 2>&1 || { echo >&2 "Warning: 'jq' command not found. Ou
 # Get SERVICE_ACCOUNT_ID from environment or argument 1
 if [[ -z "${SERVICE_ACCOUNT_ID:-}" && -z "${1:-}" ]]; then
   echo >&2 "Error: SERVICE_ACCOUNT_ID is not set."
-  echo >&2 "Usage: export SERVICE_ACCOUNT_ID=<id> && ./get_sa_token.sh"
-  echo >&2 "   or: ./get_sa_token.sh <service_account_id> <audience_url> <scope>"
+  echo >&2 "Usage: export SERVICE_ACCOUNT_ID=<id> && $0"
+  echo >&2 "   or: $0 <service_account_id> <audience_url> <scope>"
   exit 1
 fi
 SA_ID="${SERVICE_ACCOUNT_ID:-${1}}" # Use env var if set, else use arg 1
@@ -33,8 +33,8 @@ SA_ID="${SERVICE_ACCOUNT_ID:-${1}}" # Use env var if set, else use arg 1
 # Get AUD (Audience URL) from environment or argument 2
 if [[ -z "${AUD:-}" && -z "${2:-}" ]]; then
   echo >&2 "Error: AUD (Audience URL) is not set."
-  echo >&2 "Usage: export AUD=<url> && ./get_sa_token.sh"
-  echo >&2 "   or: ./get_sa_token.sh <service_account_id> <audience_url> <scope>"
+  echo >&2 "Usage: export AUD=<url> && $0"
+  echo >&2 "   or: $0 <service_account_id> <audience_url> <scope>"
   exit 1
 fi
 AUDIENCE_URL="${AUD:-${2}}" # Use env var if set, else use arg 2
@@ -42,8 +42,8 @@ AUDIENCE_URL="${AUD:-${2}}" # Use env var if set, else use arg 2
 # Get SCOPE from environment or argument 3
 if [[ -z "${SCOPE:-}" && -z "${3:-}" ]]; then
   echo >&2 "Error: SCOPE is not set."
-  echo >&2 "Usage: export SCOPE=<scope> && ./get_sa_token.sh"
-  echo >&2 "   or: ./get_sa_token.sh <service_account_id> <audience_url> <scope>"
+  echo >&2 "Usage: export SCOPE=<scope> && $0"
+  echo >&2 "   or: $0 <service_account_id> <audience_url> <scope>"
   exit 1
 fi
 REQUEST_SCOPE="${SCOPE:-${3}}" # Use env var if set, else use arg 3
@@ -121,44 +121,40 @@ echo "Step 3: Requesting access token..."
 # Read JWT assertion from file
 ASSERTION=$(< "$JWT_FILE")
 
-# Use curl to request the access token
-# -s: Silent mode (no progress meter)
-# -S: Show error message on failure
-# --request POST: Specify POST method
-# --data: Send form-encoded data
-# Note: We URL-encode the assertion just in case, though often not strictly needed for JWTs
-RESPONSE=$(curl -sS --request POST "$AUDIENCE_URL" \
-  --data "client_id=service-account" \
-  --data "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-  --data-urlencode "assertion=${ASSERTION}" \
-  --data-urlencode "scope=${REQUEST_SCOPE}")
+# --- Prepare components for printing the curl command ---
+# Values for simple --data arguments
+CURL_DATA_CLIENT_ID="client_id=service-account"
+CURL_DATA_GRANT_TYPE="grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+# For --data-urlencode arguments, the value needs shell escaping for printing if it contains special characters.
+# The JWT assertion itself is typically base64url encoded and safe, but the scope might have spaces.
+# We'll apply printf %q to the assertion value just in case for robustness in printing.
+CURL_ESCAPED_ASSERTION_CONTENT=$(printf '%q' "$ASSERTION")
+CURL_DATA_URLENCODE_ASSERTION_ARG="assertion=${CURL_ESCAPED_ASSERTION_CONTENT}"
+
+CURL_ESCAPED_SCOPE_CONTENT="$REQUEST_SCOPE"
+CURL_DATA_URLENCODE_SCOPE_ARG="scope=${CURL_ESCAPED_SCOPE_CONTENT}"
+
+# Construct the printable command string
+PRINTABLE_CURL_COMMAND=$(printf 'curl -sS --request POST %s \\\n  --data "%s" \\\n  --data "%s" \\\n  --data-urlencode "%s" \\\n  --data-urlencode "%s"' \
+    "$AUDIENCE_URL" \
+    "$CURL_DATA_CLIENT_ID" \
+    "$CURL_DATA_GRANT_TYPE" \
+    "$CURL_DATA_URLENCODE_ASSERTION_ARG" \
+    "$CURL_DATA_URLENCODE_SCOPE_ARG"
+)
+
+echo "Executing command:"
+echo -e "$PRINTABLE_CURL_COMMAND" # -e interprets backslashes for newline
+echo # Extra newline for separation before execution output
+
+CURL_EXIT_CODE=$? # Capture exit code immediately
 
 # Check if curl command succeeded and got a response
-if [[ -z "$RESPONSE" ]]; then
-    echo >&2 "Error: No response received from token endpoint '$AUDIENCE_URL'."
-    echo >&2 "Check network connectivity and the Audience URL."
+if [[ "$CURL_EXIT_CODE" -ne 0 ]]; then
+    echo >&2 "Error: curl command failed with exit code $CURL_EXIT_CODE."
     # Cleanup intermediate files
     rm -f "$PAYLOAD_FILE" "$JWT_FILE"
     exit 1
 fi
-
-echo "Access token response received."
-echo
-
-# --- Output ---
-echo "--- Access Token Response ---"
-# Try to pretty-print with jq if available, otherwise print raw
-if command -v jq >/dev/null 2>&1; then
-  echo "$RESPONSE" | jq .
-else
-  echo "$RESPONSE"
-fi
-echo "-----------------------------"
-echo
-
-# --- Cleanup ---
-echo "Cleaning up intermediate files ($PAYLOAD_FILE, $JWT_FILE)..."
-rm -f "$PAYLOAD_FILE" "$JWT_FILE"
-
-echo "Script completed successfully."
 exit 0

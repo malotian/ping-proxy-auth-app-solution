@@ -111,3 +111,5 @@ dist
 /blob-report/
 /playwright/.cache/
 key.jwk
+others/others/service-account-id-to-token.sh
+others/others/payload.json
