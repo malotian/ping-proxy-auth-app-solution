@@ -149,6 +149,45 @@ async function refreshTokenThrice(refreshToken, correlationId) {
   return latestRefreshResponse;
 }
 
+// Helper function to generate a random string for the code_verifier
+function generateRandomString(length) {
+  let text = "";
+  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  for (let i = 0; i < length; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
+}
+
+// Helper function to generate SHA256 hash and Base64URL encode it
+function sha256(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest();
+}
+
+function base64URLEncode(str) {
+  return str.toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+}
+
+// Main function to generate PKCE challenge
+function generatePkceChallenge() {
+  const verifier = generateRandomString(128); // code_verifier: min 43, max 128 chars
+  const challenge = base64URLEncode(sha256(verifier)); // code_challenge
+  return {
+    code_verifier: verifier,
+    code_challenge: challenge,
+    code_challenge_method: "S256"
+  };
+}
+
+
+
+// ... (all existing code and imports before app.post("/advice")) ...
+// ... (sessionStore, logger, helper functions like computeDeviceFingerPrint, buildStaplesJWT, etc. remain as they are) ...
+// ... (PKCE helper functions defined above or imported) ...
+
 // Main authentication advice route following sequence diagram
 app.post("/advice", async (req, res) => {
   const correlationId = req.correlationId;
@@ -186,9 +225,11 @@ app.post("/advice", async (req, res) => {
           logger.warn("Failed to parse COOKIE_STAPLES_SESSION during callback", { correlationId, error: e.message });
           return res.status(400).json({ error: "Invalid session cookie format" });
         }
-        const { StateID, NonceID, FingerPrint, TargetUrl} = parsedCookie;
+        // --- PKCE MODIFICATION: Extract code_verifier from cookie ---
+        const { StateID, NonceID, FingerPrint, TargetUrl, code_verifier } = parsedCookie; // Added code_verifier
 
-        logger.info("Extracted StateID, NonceID, and FingerPrint from cookie", { correlationId, StateID, NonceID, FingerPrint, TargetUrl});
+        logger.info("Extracted StateID, NonceID, FingerPrint, TargetUrl, and code_verifier from cookie", { correlationId, StateID, NonceID, FingerPrint, TargetUrl, hasCodeVerifier: !!code_verifier});
+
 
         // Validate device fingerprint against the one in cookie
         if (FingerPrint !== deviceId) {
@@ -200,15 +241,23 @@ app.post("/advice", async (req, res) => {
         // Exchange authorization code for tokens with PING (idaas)
         try {
           logger.info("Exchanging authorization code for tokens with PING", { correlationId, code: contextUrl.searchParams.get("code") });
+          
+          // --- PKCE MODIFICATION: Add code_verifier to token request if present ---
+          const tokenRequestBody = {
+            grant_type: "authorization_code",
+            code: contextUrl.searchParams.get("code"),
+            client_id: config.idaasClientID,
+            client_secret: config.idaasClientSecret,
+            redirect_uri: config.appCallbackEndpoint,
+          };
+          if (code_verifier) { // Only add if PKCE was used (verifier was stored)
+            tokenRequestBody.code_verifier = code_verifier;
+            logger.debug("Adding code_verifier to token exchange request", { correlationId });
+          }
+
           const tokenResponse = await axios.post(
             config.idaasAccessTokenEndpoint,
-            qs.stringify({
-              grant_type: "authorization_code",
-              code: contextUrl.searchParams.get("code"),
-              client_id: config.idaasClientID,
-              client_secret: config.idaasClientSecret,
-              redirect_uri: config.appCallbackEndpoint,
-            }),
+            qs.stringify(tokenRequestBody), // Use the constructed body
             { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
           );
           logger.info("Token exchange successful", { correlationId, tokenResponse: tokenResponse.data });
@@ -216,6 +265,7 @@ app.post("/advice", async (req, res) => {
 
           // If keep_me_logged_in flag is true, make an additional token exchange call
           if (tokenResponse.data.keep_me_logged_in) {
+            // ... (Keep Me Logged In logic remains the same) ...
             let tokenResponseKeepMeLoggedIn = await axios.post(
               config.idaasAccessTokenEndpoint,
               qs.stringify({
@@ -229,13 +279,10 @@ app.post("/advice", async (req, res) => {
               { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
             );
             logger.info("Token exchange (keep_me_logged_in) successful", {correlationId, tokenResponseKeepMeLoggedIn: tokenResponseKeepMeLoggedIn.data});
-            tokenResponseKeepMeLoggedIn.data.keep_me_logged_in = true;
-
             finalTokenResponse.data.access_token = tokenResponseKeepMeLoggedIn.data.access_token;
             finalTokenResponse.data.id_token = tokenResponseKeepMeLoggedIn.data.id_token;
             finalTokenResponse.data.refresh_token = tokenResponseKeepMeLoggedIn.data.refresh_token;
             finalTokenResponse.data.keep_me_logged_in = true;
-
 
             // multi refresh test
             // const latestRefreshTokenResponseRemeberMe = await refreshTokenThrice(
@@ -249,7 +296,7 @@ app.post("/advice", async (req, res) => {
             
             // if (latestRefreshTokenResponseRemeberMe?.data?.id_token) {
             //   finalTokenResponse.data.id_token = latestRefreshTokenResponseRemeberMe.data.id_token;
-            // }
+            // }                        
           }
 
           // Generate new SessionID and update session store (PersistenceStore)
@@ -264,18 +311,20 @@ app.post("/advice", async (req, res) => {
             StateID,
             NonceID,
             TargetUrl,
-            ...(tokenResponse.data.keep_me_logged_in
+            ...(tokenResponse.data.keep_me_logged_in 
               ? {
                   OriginalAccessToken: tokenResponse.data.access_token,
                   OriginalIdToken:    tokenResponse.data.id_token,
                   OriginalRefreshToken: tokenResponse.data.refresh_token,
                 }
               : {}),
-            
+
+
+
           };
 
           sessionStore[newSessionId] = session;
-          logger.info("Session record updated in PersistenceStore", { correlationId, SessionID: newSessionId, session });
+          logger.info("Session record updated in PersistenceStore", { correlationId, SessionID: newSessionId });
 
           // Build JWT for the authenticated session
           const jwtToken = buildStaplesJWT(session);
@@ -287,38 +336,49 @@ app.post("/advice", async (req, res) => {
             },
           });
         } catch (error) {
-          logger.error("Token exchange failed during callback", { correlationId, error: error.message });
+          logger.error("Token exchange failed during callback", { correlationId, error: error.response ? error.response.data : error.message });
           return res.status(500).json({ error: "Token exchange failed" });
         }
       } else {
         // --- Non-Callback Flow with existing session cookie ---
+        // ... (This section remains largely the same as your previous version) ...
         logger.info("Non-callback flow: Treating session cookie as SessionID", { correlationId, sessionCookie: cookieSessionValue });
         const sessionId = cookieSessionValue;
         session = sessionStore[sessionId];
         if (session) {
-          logger.info("Session record found in PersistenceStore", { correlationId, SessionID: sessionId, session });
-          // Validate fingerprint from session against current DeviceID
+          logger.info("Session record found in PersistenceStore", { correlationId, SessionID: sessionId });
           if (session.FingerPrint !== deviceId) {
             logger.warn("FingerPrint mismatch detected in session lookup", { correlationId, expected: deviceId, stored: session.FingerPrint });
+            delete sessionStore[sessionId];
             session = null;
           } else if (isAccessTokenExpired(session)) {
             logger.info("AccessToken expired; attempting to refresh token", { correlationId, SessionID: sessionId });
             if (isRefreshTokenValid(session)) {
               try {
                 logger.info("Refreshing tokens using RefreshToken", { correlationId, SessionID: sessionId });
-                const refreshResponse = await axios.post(config.idaasRenewUrl, { refreshToken: session.RefreshToken });
-                session.AccessToken = refreshResponse.data.access_token;
-                session.IdToken = refreshResponse.data.id_token;
-                session.RefreshToken = refreshResponse.data.refresh_token;
-                session.KeepMeLoggedIn = refreshResponse.data.keep_me_logged_in || false;
-                session.FingerPrint = deviceId; // Update fingerprint if needed
-                logger.info("Session successfully refreshed", { correlationId, SessionID: sessionId, session });
+                const latestRefreshResponse = await refreshTokenThrice(session.RefreshToken, correlationId);
+                if (latestRefreshResponse && latestRefreshResponse.data) {
+                    session.AccessToken = latestRefreshResponse.data.access_token;
+                    session.IdToken = latestRefreshResponse.data.id_token;
+                    if(latestRefreshResponse.data.refresh_token) {
+                        session.RefreshToken = latestRefreshResponse.data.refresh_token;
+                    }
+                    session.FingerPrint = deviceId;
+                    sessionStore[sessionId] = session;
+                    logger.info("Session successfully refreshed", { correlationId, SessionID: sessionId });
+                } else {
+                   logger.warn("Token refresh attempt did not yield new tokens or failed. Invalidating session.", { correlationId, SessionID: sessionId });
+                   delete sessionStore[sessionId];
+                   session = null;
+                }
               } catch (err) {
-                logger.error("Token refresh failed", { correlationId, SessionID: sessionId, error: err.message });
+                logger.error("Token refresh failed. Invalidating session.", { correlationId, SessionID: sessionId, error: err.message });
+                delete sessionStore[sessionId];
                 session = null;
               }
             } else {
-              logger.warn("RefreshToken invalid; re-authentication required", { correlationId, SessionID: sessionId });
+              logger.warn("RefreshToken invalid; re-authentication required. Invalidating session.", { correlationId, SessionID: sessionId });
+              delete sessionStore[sessionId];
               session = null;
             }
           } else {
@@ -331,7 +391,7 @@ app.post("/advice", async (req, res) => {
     }
 
     // Validate session and issue JWT if AccessToken is valid
-    if (session && session.AccessToken) {
+    if (session && session.AccessToken && !isAccessTokenExpired(session)) {
       logger.info("Session valid. Proceeding to generate JWT", { correlationId, SessionID: session.SessionID });
       const jwtToken = buildStaplesJWT(session);
       logger.info("JWT built and session authenticated", { correlationId, KeepMeLoggedIn: session.KeepMeLoggedIn });
@@ -350,7 +410,7 @@ app.post("/advice", async (req, res) => {
     const txnId = 'app-txn-' + uuidv4();
     logger.debug("Generated new GUIDs for StateID and NonceID", { correlationId, StateID: stateId, NonceID: nonceId });
 
-    // Compose COOKIE_STAPLES_SESSION_VALUE with null tokens and current DeviceID
+    // --- PKCE MODIFICATION: Prepare sessionCookiePayload in advance to include code_verifier if PKCE is used ---
     const sessionCookiePayload = {
       StateID: stateId,
       NonceID: nonceId,
@@ -360,22 +420,85 @@ app.post("/advice", async (req, res) => {
       RefreshToken: null,
       TargetUrl: context.url
     };
-    logger.info("Composed new COOKIE_STAPLES_SESSION payload", { correlationId, sessionCookiePayload });
+    // code_verifier will be added to sessionCookiePayload if PAR with PKCE is successful
 
-    // Compose PING Authentication URL with required parameters
-    const authnParams = new URLSearchParams({
-      client_id: config.idaasClientID,
-      redirect_uri: config.appCallbackEndpoint,
-      scope: config.scope,
-      response_type: config.response_type,
-      state: stateId,
-      nonce: nonceId,
-      txn_id: txnId,
-    });
-    const authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParams.toString()}`;
-    logger.info("Constructed PING Authentication URL", { correlationId, authnUrl });
+    let authnUrl;
 
-    // Advise NGINX/TierA to set authentication headers accordingly
+    if (config.usePAR && config.idaasParEndpoint && config.idaasClientID && config.idaasClientSecret) {
+      logger.info("Attempting Pushed Authorization Request (PAR) with PKCE", { correlationId });
+      try {
+        // --- PKCE MODIFICATION: Generate PKCE challenge ---
+        const pkce = generatePkceChallenge();
+        logger.debug("Generated PKCE challenge", { correlationId, method: pkce.code_challenge_method });
+
+        const parPayload = {
+          client_id: config.idaasClientID,
+          redirect_uri: config.appCallbackEndpoint,
+          scope: "write",
+          response_type: config.response_type,
+          // --- PKCE MODIFICATION: Add challenge to PAR payload ---
+          code_challenge: pkce.code_challenge,
+          code_challenge_method: pkce.code_challenge_method,
+        };
+
+        const parFullPayload = { ...parPayload, client_secret: config.idaasClientSecret };
+
+        const parResponse = await axios.post(
+          config.idaasParEndpoint,
+          qs.stringify(parFullPayload),
+          { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+        );
+
+        const { request_uri, expires_in } = parResponse.data;
+        if (!request_uri) {
+          logger.error("PAR response did not include request_uri. Falling back to standard flow.", { correlationId, response: parResponse.data });
+        } else {
+          logger.info("PAR successful", { correlationId, request_uri, expires_in });
+          const authnParamsPAR = new URLSearchParams({
+            client_id: config.idaasClientID,
+            request_uri: request_uri,
+            response_type: config.response_type,         
+            redirect_uri: config.appCallbackEndpoint,   
+          });
+          authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParamsPAR.toString()}`;
+          // --- PKCE MODIFICATION: Store code_verifier in the cookie payload ---
+          sessionCookiePayload.code_verifier = pkce.code_verifier;
+          logger.debug("Stored code_verifier in session cookie payload for later use", { correlationId });
+        }
+      } catch (parError) {
+        logger.error("Pushed Authorization Request (PAR) failed. Falling back to standard authorization flow.", {
+          correlationId,
+          error: parError.response ? parError.response.data : parError.message,
+        });
+      }
+    }
+
+    if (!authnUrl) { // If PAR not used, or PAR failed
+      if (config.usePAR) {
+          logger.warn("PAR was enabled but failed or did not produce a request_uri, using standard authorization flow (without PKCE for this fallback example, unless added separately).", { correlationId });
+      }
+      // Standard flow (original code, could also add PKCE here if desired for non-PAR flow)
+      const authnParams = new URLSearchParams({
+        client_id: config.idaasClientID,
+        redirect_uri: config.appCallbackEndpoint,
+        scope: config.scope,
+        response_type: config.response_type,
+        state: stateId,
+        nonce: nonceId,
+        txn_id: txnId,
+        // Note: If you want PKCE for non-PAR flow as well, generate and add here,
+        // and store code_verifier in sessionCookiePayload.
+        // const pkce = generatePkceChallenge();
+        // authnParams.set('code_challenge', pkce.code_challenge);
+        // authnParams.set('code_challenge_method', pkce.code_challenge_method);
+        // sessionCookiePayload.code_verifier = pkce.code_verifier;
+      });
+      authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParams.toString()}`;
+    }
+    
+    logger.info("Composed COOKIE_STAPLES_SESSION payload with potentially code_verifier", { correlationId, sessionCookiePayload: Object.keys(sessionCookiePayload) }); // Log keys to avoid logging sensitive data
+    logger.info("Constructed PING Authentication URL", { correlationId, authnUrl, usingPAR: authnUrl.includes("request_uri="), usingPKCE: !!sessionCookiePayload.code_verifier });
+
     return res.json({
       adviceHeaders: {
         HTTP_STAPLES_AUTHN_URL: authnUrl,
@@ -391,6 +514,8 @@ app.post("/advice", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+// ... (app.listen and any other remaining code) ...
 
 // Start Auth service with detailed startup logging
 app.listen(config.port, "0.0.0.0", () => {

@@ -12,8 +12,10 @@ module.exports = {
   port: process.env.PORT || 3002,
 
   // Build endpoints using env-derived DNS and realm (with optional overrides)
+  usePAR: true,
   idaasAuthorizeEndpoint:   `${internalIdentityServiceBaseUrl}/am/oauth2/${realm}/authorize`,
   idaasAccessTokenEndpoint: `${externaldentityServiceBaseUrl}/am/oauth2/${realm}/access_token`,
+  idaasParEndpoint:         `${externaldentityServiceBaseUrl}/am/oauth2/${realm}/par`,
 
   // OAuth2 client credentials
   idaasClientID:             process.env.PING_CLIENT_ID               || 'staples_dotcom_application_client_id',
@@ -26,7 +28,7 @@ module.exports = {
 
   // OAuth2 settings
   scope:         process.env.OIDC_SCOPE          || 'openid',
-  response_type: process.env.OIDC_RESPONSE_TYPE || 'code',
+  response_type: process.env.OIDC_RESPONSE_TYPE  || 'code',
 
   // API keys (optional)
   apiKey:       process.env.API_KEY        || '67541efcb5e9482fe50df2d2aa603d1d',
