@@ -13,6 +13,8 @@ const config = {
   ping: {
     baseUrl: 'https://openam-staplesciam-use4-dev.id.forgerock.io', // Domain to clear cookies for
     realm: 'alpha',
+    usePAR: true, // << SET THIS TO true TO TEST PAR, false FOR STANDARD FLOW >>
+    parEndpoint: 'https://openam-staplesciam-use4-dev.id.forgerock.io/am/oauth2/realms/root/realms/alpha/par', // Example PAR endpoint
   },
   clients: {
     regular: {
@@ -44,13 +46,9 @@ const config = {
 const testCases = [
   // email scenarios
   { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
-  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
-  { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: true },
   { loginType: 'email', identifier: 'playwright@staples.com', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: false },
   // username scenarios
   { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: true },
-  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: true, jumpUrl: 'https://www.staples.com/checkout', showGuest: false },
-  { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: true },
   { loginType: 'username', identifier: 'playwright', password: 'P@$$w0rd@123', keepMeLoggedIn: false, jumpUrl: undefined, showGuest: false },
 ];
 
@@ -61,8 +59,6 @@ interface LogFetchTask {
   testTitle: string;
   transactionId: string;
 }
-// let allLogFetchTasks: LogFetchTask[] = []; // Store all transaction IDs to fetch logs for // Replaced by file queue
-
 
 // ---------- COOKIE CLEARING HELPER ----------
 async function clearAllCookiesForConfigDomain(page: Page) {
@@ -71,20 +67,10 @@ async function clearAllCookiesForConfigDomain(page: Page) {
     console.warn('config.ping.baseUrl is not defined. Cannot clear cookies.');
     return;
   }
-  // While page.context().clearCookies() clears all cookies for the context,
-  // to be more precise for a specific domain as requested:
   console.log(`Clearing all cookies for the current browser context (which affects all domains).`);
   await page.context().clearCookies();
-  // Playwright's `clearCookies()` clears cookies for the entire context.
-  // If you need to be extremely precise and only clear for a specific domain (though clearCookies() is generally sufficient for test isolation):
-  // const cookies = await page.context().cookies([targetUrl]);
-  // for (const cookie of cookies) {
-  //   // Construct a new cookie object with an expiry date in the past.
-  //   // This method is more complex and usually not needed if context.clearCookies() is used.
-  // }
   console.log(`All cookies for the current browser context have been cleared.`);
 }
-
 
 // ---------- SERVER LIFECYCLE ----------
 test.beforeAll(async () => { // Made async for potential future needs
@@ -93,13 +79,11 @@ test.beforeAll(async () => { // Made async for potential future needs
     fs.mkdirSync(config.logsDir, { recursive: true });
     console.log(`📂 Created base logs directory: ${config.logsDir}`);
   }
-  // Initialize/clear the log queue file at the beginning of the test suite
   try {
     fs.writeFileSync(config.logQueueFile, JSON.stringify([]), 'utf-8'); // Start with an empty array
     console.log(`📋 Initialized/Cleared log queue file: ${config.logQueueFile}`);
   } catch (err) {
     console.error(`❌ Error initializing log queue file ${config.logQueueFile}:`, err);
-    // Depending on severity, you might want to throw err or handle it
   }
 
   server = https.createServer(
@@ -123,9 +107,8 @@ test.beforeAll(async () => { // Made async for potential future needs
 
 test.afterAll(async () => { // Made async
   console.log('🛑 Shutting down callback server');
-  await new Promise<void>(resolve => server.close(() => resolve())); // Ensure server is fully closed
+  await new Promise<void>(resolve => server.close(() => resolve()));
   console.log('🚪 Callback server shut down.');
-  // Log queue file processing is handled by the 'Fetch All Collected Logs' test in a separate file.
 });
 
 test.beforeEach(async ({ page }) => { // Made async to await cookie clearing
@@ -139,14 +122,107 @@ async function fetchOpenIDConfig() {
   const url = `${config.ping.baseUrl}/am/oauth2/${config.ping.realm}/.well-known/openid-configuration`;
   console.log(`\n📡 Fetching OpenID configuration from: ${url}`);
   const res = await axios.get(url);
-  console.log(`✅ OpenID config fetched: authorization_endpoint=${res.data.authorization_endpoint}`);
+  console.log(`✅ OpenID config fetched: authorization_endpoint=${res.data.authorization_endpoint}, pushed_authorization_request_endpoint=${res.data.pushed_authorization_request_endpoint}`);
   return res.data;
 }
 
-function buildAuthUrl(authEndpoint: string, tc: typeof testCases[0]) {
-  console.log(`\n🔐 Building auth URL for loginType=${tc.loginType}, keepMeLoggedIn=${tc.keepMeLoggedIn}, jumpUrl=${tc.jumpUrl}`);
+function generateRandomString(length: number): string {
+  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const randomBytes = crypto.randomBytes(length);
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += possible.charAt(randomBytes[i] % possible.length);
+  }
+  return result;
+}
+
+function sha256(buffer: string | Buffer): Buffer {
+  return crypto.createHash("sha256").update(buffer).digest();
+}
+
+function base64URLEncode(str: Buffer): string {
+  return str.toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+}
+
+interface PkceCodes {
+  code_verifier: string;
+  code_challenge: string;
+  code_challenge_method: "S256";
+}
+
+function generatePkceChallenge(): PkceCodes {
+  const verifier = generateRandomString(128);
+  const challenge = base64URLEncode(sha256(verifier));
+  return {
+    code_verifier: verifier,
+    code_challenge: challenge,
+    code_challenge_method: "S256"
+  };
+}
+
+// MODIFIED: buildAuthUrl to handle PAR and return codeVerifier
+async function buildAuthUrl(
+  authEndpoint: string, // Standard authorization endpoint
+  tc: typeof testCases[0]
+): Promise<{ authUrl: string; codeVerifier?: string }> {
+  console.log(`\n🔐 Building auth URL for loginType=${tc.loginType}, keepMeLoggedIn=${tc.keepMeLoggedIn}, jumpUrl=${tc.jumpUrl}, usePAR=${config.ping.usePAR}`);
   const state = crypto.randomBytes(16).toString('hex');
   const nonce = crypto.randomBytes(16).toString('hex');
+  let codeVerifierToReturn: string | undefined;
+
+  if (config.ping.usePAR && config.ping.parEndpoint) {
+    console.log('    🚀 Using Pushed Authorization Request (PAR) with PKCE');
+    const pkce = generatePkceChallenge();
+    codeVerifierToReturn = pkce.code_verifier;
+
+    const parPayload: Record<string, any> = {
+      client_id: config.clients.regular.clientId,
+      client_secret: config.clients.regular.clientSecret,
+      response_type: 'code',
+      scope: 'openid profile email write',
+      redirect_uri: config.redirectUri,
+      code_challenge: pkce.code_challenge,
+      code_challenge_method: pkce.code_challenge_method,
+      //acr_values: '__staples_h_device_profile'
+    };
+
+    try {
+      console.log(`    ➡️  Pushing to PAR endpoint: ${config.ping.parEndpoint}`);
+      const loggableParPayload = { ...parPayload, client_secret: '********' };
+      console.log(`    📋 PAR Payload: ${JSON.stringify(loggableParPayload)}`);
+      const parResponse = await axios.post(
+        config.ping.parEndpoint,
+        qs.stringify(parPayload),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      );
+
+      const { request_uri, expires_in } = parResponse.data;
+      if (!request_uri) {
+        throw new Error('PAR response did not include request_uri');
+      }
+      console.log(`    ✅ PAR successful: request_uri=${request_uri}, expires_in=${expires_in}`);
+
+      const paramsForAuthorize: Record<string, any> = {
+        client_id: config.clients.regular.clientId,
+        request_uri: request_uri,
+        acr_values: '__staples_h_device_profile',
+      };
+      if (tc.jumpUrl) paramsForAuthorize.jumpUrl = tc.jumpUrl;
+      if (tc.showGuest) paramsForAuthorize.showGuest = tc.showGuest;
+      const finalAuthUrl = `${authEndpoint}?${qs.stringify(paramsForAuthorize)}`;
+      console.log(`    🌍 Full auth URL (via PAR): ${finalAuthUrl}`);
+      return { authUrl: finalAuthUrl, codeVerifier: codeVerifierToReturn };
+    } catch (error: any) {
+      console.error('    ❌ PAR request failed:', error.response?.data || error.message);
+      console.warn('    ⚠️ Falling back to standard authorization flow due to PAR failure. PKCE might not be applied in this fallback.');
+    }
+  }
+
+  // Standard (non-PAR) flow or PAR fallback
+  console.log('    🛡️ Using standard authorization flow (PKCE not applied in this path unless manually added)');
   const params: Record<string, any> = {
     client_id: config.clients.regular.clientId,
     redirect_uri: config.redirectUri,
@@ -157,13 +233,11 @@ function buildAuthUrl(authEndpoint: string, tc: typeof testCases[0]) {
     showGuest: tc.showGuest,
     acr_values: '__staples_h_device_profile'
   };
-  if (tc.jumpUrl) {
-    params.jumpUrl = tc.jumpUrl;
-    console.log(`➡️  Including jumpUrl param: ${tc.jumpUrl}`);
-  }
-  const url = `${authEndpoint}?${qs.stringify(params)}`;
-  console.log(`🌍 Full auth URL: ${url}`);
-  return url;
+  if (tc.jumpUrl) params.jumpUrl = tc.jumpUrl;
+
+  const standardAuthUrl = `${authEndpoint}?${qs.stringify(params)}`;
+  console.log(`    🌍 Full auth URL (standard): ${standardAuthUrl}`);
+  return { authUrl: standardAuthUrl, codeVerifier: codeVerifierToReturn };
 }
 
 async function loginAndCaptureCode(
@@ -171,15 +245,14 @@ async function loginAndCaptureCode(
   authUrl: string,
   tc: typeof testCases[0]
 ): Promise<{ authCode: string; transactionId?: string }> {
-
   console.log(`\n🚀 Navigating to Auth URL and performing login for ${tc.identifier}`);
   server.capturedAuthCode = undefined;
-  // transactionId is now managed by capturedTransactionIds array
+  capturedTransactionIds = [];
 
-  // Attach response listener to capture transaction ID from /authenticate endpoint
+  // Attach response listener to capture transaction ID headers
   page.on('response', async (response) => {
     const url = response.url();
-    if (url.includes('/authenticate') || url.includes('/sessions?_action=logout')) { // Capture for auth and logout
+    if (url.includes('/authenticate') || url.includes('/sessions?_action=logout')) {
       const header = response.headers()['x-forgerock-transactionid'];
       if (header) {
         console.log(`🆔 Captured x-forgerock-transactionid: ${header} from ${url}`);
@@ -187,6 +260,14 @@ async function loginAndCaptureCode(
       }
     }
   });
+
+  page.context().grantPermissions(['geolocation'], {
+    origin: config.ping.baseUrl
+  });
+
+  // (optional) stub a location so that JS `navigator.geolocation.getCurrentPosition()` returns data
+  page.context().setGeolocation({ latitude: 37.7749, longitude: -122.4194 });
+
 
   await page.goto(authUrl);
 
@@ -219,30 +300,37 @@ async function loginAndCaptureCode(
       if (server.capturedAuthCode) {
         clearTimeout(timeout);
         clearInterval(interval);
-        // Resolve with the first captured transactionId's base, if available
         const baseTransactionId = capturedTransactionIds.length > 0
-            ? getBaseTransactionId(capturedTransactionIds[0])
-            : undefined;
-        resolve({
-          authCode: server.capturedAuthCode as string, // Ensure it's a string
-          transactionId: baseTransactionId,
-        });
+          ? getBaseTransactionId(capturedTransactionIds[0])
+          : undefined;
+        resolve({ authCode: server.capturedAuthCode!, transactionId: baseTransactionId });
       }
     }, 500);
   });
 }
 
-async function exchangeAuthCode(tokenEndpoint: string, code: string) {
+async function exchangeAuthCode(
+  tokenEndpoint: string,
+  code: string,
+  codeVerifier?: string
+) {
   console.log(`\n🔁 Exchanging auth code at: ${tokenEndpoint}`);
+  const payload: Record<string, any> = {
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: config.redirectUri,
+    client_id: config.clients.regular.clientId,
+    client_secret: config.clients.regular.clientSecret,
+  };
+  if (codeVerifier) {
+    payload.code_verifier = codeVerifier;
+    console.log('    🔑 Including code_verifier in token exchange.');
+  } else {
+    console.log('    ⚠️ No code_verifier provided for token exchange (PKCE not used).');
+  }
   const res = await axios.post(
     tokenEndpoint,
-    qs.stringify({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: config.redirectUri,
-      client_id: config.clients.regular.clientId,
-      client_secret: config.clients.regular.clientSecret,
-    }),
+    qs.stringify(payload),
     { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
   );
   console.log(`✅ Token response received: ${JSON.stringify(res.data, null, 2)}`);
@@ -251,7 +339,11 @@ async function exchangeAuthCode(tokenEndpoint: string, code: string) {
 
 async function exchangeToken(tokenEndpoint: string, data: Record<string, any>) {
   console.log(`🔄 Exchanging token with payload: ${JSON.stringify(data)}`);
-  const res = await axios.post(tokenEndpoint, qs.stringify(data), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+  const res = await axios.post(
+    tokenEndpoint,
+    qs.stringify(data),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+  );
   console.log(`✅ Exchange response: ${JSON.stringify(res.data, null, 2)}`);
   return res.data;
 }
@@ -264,14 +356,9 @@ function decodeJwt(token: string, label: string) {
   }
   try {
     const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-    // Append payload.exp and calculate expiration date
     const exp = payload.exp;
-
     const expDate = exp ? new Date(exp * 1000) : null;
-    console.log(
-      `🔍 [JWT] Decoded ${label}:`,
-      payload
-    );
+    console.log(`🔍 [JWT] Decoded ${label}:`, payload);
     if (exp) {
       console.log(`⏰ [JWT] Expiration: ${expDate?.toUTCString()} (${expDate?.toISOString()})`);
     }
@@ -280,132 +367,121 @@ function decodeJwt(token: string, label: string) {
   }
 }
 
-// ---------- LOG FETCHING HELPERS (NEW - only those needed by auth flows) ----------
 function getBaseTransactionId(fullTransactionId: string): string | undefined {
-  // Extracts the part before "-request-" or "-logout-" or returns if no suffix
   const match = fullTransactionId.match(/^([a-f0-9-]+)(?:-request-\d+|-logout-\d+)?$/i);
   return match ? match[1] : undefined;
 }
 
-// Helper to append a task to the queue file
 function appendTaskToLogQueue(task: LogFetchTask) {
   try {
     let tasks: LogFetchTask[] = [];
     if (fs.existsSync(config.logQueueFile)) {
       const fileContent = fs.readFileSync(config.logQueueFile, 'utf-8');
-      if (fileContent.trim() !== '') { // Ensure file is not empty before parsing
-        try {
-            tasks = JSON.parse(fileContent);
-            if (!Array.isArray(tasks)) { // Basic validation that it's an array
-                console.warn(`⚠️ Log queue file ${config.logQueueFile} does not contain a valid JSON array. Re-initializing for this append.`);
-                tasks = []; // If not an array, start fresh for this operation
-            }
-        } catch (parseError) {
-            console.error(`❌ Error parsing log queue file ${config.logQueueFile}. Re-initializing for this append. Error:`, parseError);
-            tasks = []; // Re-initialize if parsing fails
-        }
+      if (fileContent.trim()) {
+        tasks = JSON.parse(fileContent);
+        if (!Array.isArray(tasks)) tasks = [];
       }
     }
     tasks.push(task);
-    fs.writeFileSync(config.logQueueFile, JSON.stringify(tasks, null, 2), 'utf-8'); // Pretty print for readability
+    fs.writeFileSync(config.logQueueFile, JSON.stringify(tasks, null, 2), 'utf-8');
     console.log(`📝 Appended task for TID ${task.transactionId} (Test: "${task.testTitle}") to ${config.logQueueFile}`);
   } catch (err) {
     console.error(`❌ Error appending task to log queue file ${config.logQueueFile}:`, err);
   }
 }
 
-
 // ---------- PARAMETRIZED TESTS ----------
 for (const tc of testCases) {
-  test(`Auth Flow | ${tc.loginType} | keepMeLoggedIn=${tc.keepMeLoggedIn} | jumpUrl=${tc.jumpUrl ?? 'none'} | showGuest=${tc.showGuest}`, async ({ page }, testInfo) => { // Added testInfo
-    console.log(`\n🎬 Starting test case: ${JSON.stringify(tc)}`);
+  test(`Auth Flow | ${tc.loginType} | PAR=${config.ping.usePAR} | keepMeLoggedIn=${tc.keepMeLoggedIn} | jumpUrl=${tc.jumpUrl ?? 'none'} | showGuest=${tc.showGuest}`, async ({ page }, testInfo) => {
+    console.log(`\n🎬 Starting test case: ${JSON.stringify(tc)} | PAR enabled: ${config.ping.usePAR}`);
     const openid = await fetchOpenIDConfig();
-    const authUrl = buildAuthUrl(openid.authorization_endpoint, tc);
     const tokenUrl = openid.token_endpoint;
 
-    // Test case specific variables
+    const { authUrl, codeVerifier } = await buildAuthUrl(openid.authorization_endpoint, tc);
+    if (codeVerifier) {
+      console.log(`    🔑 PKCE code_verifier generated (will be used in token exchange)`);
+    } else if (config.ping.usePAR) {
+      console.warn(`    ⚠️ PAR was enabled, but no code_verifier returned. Check PAR response.`);
+    }
+
     let mainTransactionId: string | undefined;
 
-    try { // Wrap test logic in try-finally to ensure log fetching
-        const { authCode, transactionId } = await loginAndCaptureCode(page, authUrl, tc);
-        mainTransactionId = transactionId; // Store the primary transaction ID for log fetching
-        console.log(`✅ Received auth code: ${authCode}`);
-        console.log(`📎 Main Transaction ID for logs: ${mainTransactionId ?? 'Not found'}`);
-        expect(authCode).toBeTruthy();
+    try {
+      const { authCode, transactionId } = await loginAndCaptureCode(page, authUrl, tc);
+      mainTransactionId = transactionId;
+      console.log(`✅ Received auth code: ${authCode}`);
+      console.log(`📎 Main Transaction ID for logs: ${mainTransactionId ?? 'Not found'}`);
+      expect(authCode).toBeTruthy();
 
-        const regularTokenResponse = await exchangeAuthCode(tokenUrl, authCode);
-        // decode regular tokens
-        decodeJwt(regularTokenResponse.access_token, 'Regular Access Token');
-        decodeJwt(regularTokenResponse.refresh_token, 'Regular Refresh Token');
-        decodeJwt(regularTokenResponse.id_token, 'Regular ID Token');
+      const regularTokenResponse = await exchangeAuthCode(tokenUrl, authCode, codeVerifier);
+      // decode regular tokens
+      decodeJwt(regularTokenResponse.access_token, 'Regular Access Token');
+      decodeJwt(regularTokenResponse.refresh_token, 'Regular Refresh Token');
+      decodeJwt(regularTokenResponse.id_token, 'Regular ID Token');
 
-        // assert regular tokens
-        expect(regularTokenResponse.access_token).toBeTruthy();
-        expect(regularTokenResponse.refresh_token).toBeTruthy();
-        expect(regularTokenResponse.id_token).toBeTruthy();
+      // assert regular tokens
+      expect(regularTokenResponse.access_token).toBeTruthy();
+      expect(regularTokenResponse.refresh_token).toBeTruthy();
+      expect(regularTokenResponse.id_token).toBeTruthy();
 
-        // keepMeLoggedIn assertion
-        console.log(`🔒 Asserting keepMeLoggedIn flag: expected=${tc.keepMeLoggedIn}`);
-        if (tc.keepMeLoggedIn) {
+      // keepMeLoggedIn assertion
+      console.log(`🔒 Asserting keepMeLoggedIn flag: expected=${tc.keepMeLoggedIn}`);
+      if (tc.keepMeLoggedIn) {
         expect(regularTokenResponse.keep_me_logged_in).toBe('true');
-        } else {
-        expect(regularTokenResponse.keep_me_logged_in === 'false' || regularTokenResponse.keep_me_logged_in === undefined).toBe(true);
-        }
+      } else {
+        expect(regularTokenResponse.keep_me_logged_in === 'false' ||
+               regularTokenResponse.keep_me_logged_in === undefined).toBe(true);
+      }
 
-        // jumpUrl assertion
-        console.log(`🚀 Asserting jumpUrl: expected=${tc.jumpUrl}`);
-
-        if (tc.jumpUrl) {
+      // jumpUrl assertion
+      console.log(`🚀 Asserting jumpUrl: expected=${tc.jumpUrl}`);
+      if (tc.jumpUrl) {
         expect(regularTokenResponse.jump_url).toBe(tc.jumpUrl);
-        } else {
+      } else {
         expect(regularTokenResponse).not.toHaveProperty('jump_url');
-        }
+      }
 
-        // conditional KeepMeLoggedIn token exchange & extended refresh assert
-        if (tc.keepMeLoggedIn && regularTokenResponse.keep_me_logged_in === 'true') {
+      // conditional KeepMeLoggedIn flows
+      if (tc.keepMeLoggedIn && regularTokenResponse.keep_me_logged_in === 'true') {
         console.log('🛡️ Performing KeepMeLoggedIn token exchange for extended session');
         const keepMeLoggedInResponse = await exchangeToken(tokenUrl, {
-            grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-            subject_token: regularTokenResponse.access_token,
-            subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-            client_id: config.clients.keepMeLoggedIn.clientId,
-            client_secret: config.clients.keepMeLoggedIn.clientSecret,
-            scope: 'transfer openid email profile',
+          grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+          subject_token: regularTokenResponse.access_token,
+          subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          client_id: config.clients.keepMeLoggedIn.clientId,
+          client_secret: config.clients.keepMeLoggedIn.clientSecret,
+          scope: 'transfer openid email profile',
         });
         // decode KeepMeLoggedIn tokens
         decodeJwt(keepMeLoggedInResponse.access_token, 'KeepMeLoggedIn Access Token');
         decodeJwt(keepMeLoggedInResponse.refresh_token, 'KeepMeLoggedIn Refresh Token');
-        //decodeJwt(rm.id_token, 'KeepMeLoggedIn ID Token');
 
         // assert KeepMeLoggedIn tokens
         expect(keepMeLoggedInResponse.access_token).toBeTruthy();
         expect(keepMeLoggedInResponse.refresh_token).toBeTruthy();
-        //expect(rm.id_token).toBeTruthy();
 
         // assert extended refresh token TTL (~180 days)
         const payload = JSON.parse(Buffer.from(keepMeLoggedInResponse.refresh_token.split('.')[1], 'base64').toString('utf8'));
         const now = Math.floor(Date.now() / 1000);
         const ttl = payload.exp - now;
         console.log(`⏳ KeepMeLoggedIn Refresh Token TTL (seconds): ${ttl}`);
-        expect(ttl).toBeGreaterThan(15500000); // ~180 days
+        expect(ttl).toBeGreaterThan(15500000);
 
         console.log('🔄 Performing KeepMeLoggedIn token refresh');
         const refreshedKeepMeLoggedInResponse = await exchangeToken(tokenUrl, {
-            grant_type: 'refresh_token',
-            refresh_token: keepMeLoggedInResponse.refresh_token,
-            client_id: config.clients.keepMeLoggedIn.clientId,
-            client_secret: config.clients.keepMeLoggedIn.clientSecret,
+          grant_type: 'refresh_token',
+          refresh_token: keepMeLoggedInResponse.refresh_token,
+          client_id: config.clients.keepMeLoggedIn.clientId,
+          client_secret: config.clients.keepMeLoggedIn.clientSecret,
         });
-        // decode refreshed KeepMeLoggedIn tokens
         decodeJwt(refreshedKeepMeLoggedInResponse.access_token, 'Refreshed KeepMeLoggedIn Access Token');
         decodeJwt(refreshedKeepMeLoggedInResponse.id_token, 'Refreshed KeepMeLoggedIn ID Token');
 
-        // assert refreshed KeepMeLoggedIn tokens
+        // assert refreshed tokens
         expect(refreshedKeepMeLoggedInResponse.access_token).toBeTruthy();
         expect(refreshedKeepMeLoggedInResponse.id_token).toBeTruthy();
 
-
-        console.log('🍪 Checking session-jwt cookie');
+        console.log('🍪 Checking session-jwt and trusted-device cookies');
         const cookies = await page.context().cookies(config.ping.baseUrl);
         console.log(`🔑 Retrieved cookies: ${JSON.stringify(cookies)}`);
 
@@ -418,36 +494,28 @@ for (const tc of testCases) {
         console.log(`🍪 fr-trusted-device-identifier cookie: ${JSON.stringify(trustedDeviceCookie)}`);
         expect(trustedDeviceCookie).toBeDefined();
         expect(trustedDeviceCookie?.value).toBeTruthy();
-
-        } else {
+      } else {
         console.log('⚠️ Skipping KeepMeLoggedIn extended flows');
-        }
+      }
     } finally {
-        // Log fetching is no longer done here. Instead, we collect the info.
-        let idToLog: string | undefined = mainTransactionId;
-        if (!idToLog && capturedTransactionIds.length > 0) {
-            const firstBaseId = getBaseTransactionId(capturedTransactionIds[0]);
-            if (firstBaseId) {
-                console.warn(`⚠️ Main transaction ID not explicitly set for "${testInfo.title}", using first captured base ID: ${firstBaseId} for log collection.`);
-                idToLog = firstBaseId;
-            } else {
-                console.error(`❌ Could not determine a base transaction ID to collect for "${testInfo.title}".`);
-            }
-        }
-
-        if (idToLog) {
-            // allLogFetchTasks.push({ testTitle: testInfo.title, transactionId: idToLog }); // Old way
-            // console.log(`📝 Added transaction ID ${idToLog} from test "${testInfo.title}" to log fetching queue.`); // Old way
-            appendTaskToLogQueue({ testTitle: testInfo.title, transactionId: idToLog });
+      let idToLog: string | undefined = mainTransactionId;
+      if (!idToLog && capturedTransactionIds.length > 0) {
+        const firstBaseId = getBaseTransactionId(capturedTransactionIds[0]);
+        if (firstBaseId) {
+          console.warn(`⚠️ Main transaction ID not explicitly set for "${testInfo.title}", using first captured base ID: ${firstBaseId} for log collection.`);
+          idToLog = firstBaseId;
         } else {
-            console.error(`❌ No transaction ID to add to log fetching queue for test "${testInfo.title}".`);
+          console.error(`❌ Could not determine a base transaction ID to collect for "${testInfo.title}".`);
         }
+      }
+
+      if (idToLog) {
+        appendTaskToLogQueue({ testTitle: testInfo.title, transactionId: idToLog });
+      } else {
+        console.error(`❌ No transaction ID to add to log fetching queue for test "${testInfo.title}".`);
+      }
     }
 
     console.log(`✅✅ Test completed for: ${JSON.stringify(tc)}`);
   });
 }
-
-// ---------- FINAL TEST CASE FOR LOG FETCHING (MOVED TO fetch-logs.spec.ts) ----------
-// The 'Fetch All Collected Logs' test case and its specific helpers (fetchAndSaveLogs, sanitizeTestName)
-// have been moved to a separate file: fetch-logs.spec.ts
