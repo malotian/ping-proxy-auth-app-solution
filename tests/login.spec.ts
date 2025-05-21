@@ -11,10 +11,10 @@ import path from 'path'; // Added for path manipulation
 // ---------- CONFIGURATION ----------
 const config = {
   ping: {
-    baseUrl: 'https://openam-staplesciam-use4-dev.id.forgerock.io', // Domain to clear cookies for
+    baseUrl: 'https://identity-qe.staples.com', // Domain to clear cookies for
     realm: 'alpha',
     usePAR: true, // << SET THIS TO true TO TEST PAR, false FOR STANDARD FLOW >>
-    parEndpoint: 'https://openam-staplesciam-use4-dev.id.forgerock.io/am/oauth2/realms/root/realms/alpha/par', // Example PAR endpoint
+    parEndpoint: 'https://identity-qe.staples.com/am/oauth2/realms/root/realms/alpha/par', // Example PAR endpoint
   },
   clients: {
     regular: {
@@ -32,7 +32,7 @@ const config = {
     port: 3000,
   },
   monitoringApi: { // Added for monitoring API
-    baseUrl: 'https://openam-staplesciam-use4-dev.id.forgerock.io/monitoring/logs',
+    baseUrl: 'https://identity-qe.staples.com/monitoring/logs',
     apiKey: '61d244ee890a4aae6d97f033f905eda2',
     apiSecret: '38ffee277dc1be87248724aead9e690b08245e97d759826eef1462017d4e9694',
     source: 'am-everything',

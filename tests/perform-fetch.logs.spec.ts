@@ -7,7 +7,7 @@ import path from 'path';
 // ---------- CONFIGURATION (Subset for Log Fetching) ----------
 const config = {
   monitoringApi: {
-    baseUrl: 'https://openam-staplesciam-use4-dev.id.forgerock.io/monitoring/logs',
+    baseUrl: 'https://identity-qe.staples.com/monitoring/logs',
     apiKey: '61d244ee890a4aae6d97f033f905eda2',
     apiSecret: '38ffee277dc1be87248724aead9e690b08245e97d759826eef1462017d4e9694',
     source: 'am-everything',

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 SERVICE_ACCOUNT_ID=36e073e4-fa88-4fd1-a0af-73fd825c7cbf
-AUD=https://openam-staplesciam-use4-dev.id.forgerock.io/am/oauth2/access_token
+AUD=https://identity-qe.staples.com/am/oauth2/access_token
 SCOPE=fr:idc:proxy-connect:*
 
 # Exit immediately if a command exits with a non-zero status.

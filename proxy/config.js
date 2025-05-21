@@ -6,7 +6,7 @@ config = {
   port: process.env.PORT || 3000,
   
   externalApplicationBaseUrl: process.env.EXTERNAL_APPLICATION_BASE_URL || 'http://mock-app.ngrok.dev',
-  externaldentityServiceBaseUrl :  process.env.EXTERNAL_IDENTITY_SERVICE_BASE_URL  || 'https://openam-staplesciam-use4-dev.id.forgerock.io',
+  externaldentityServiceBaseUrl :  process.env.EXTERNAL_IDENTITY_SERVICE_BASE_URL  || 'https://identity-qe.staples.com',
 
   internalApplicationBaseUrl: process.env.INTERNAL_APPLICATION_BASE_URL || 'http://app-127-0-0-1.sslip.io:3001',
   internalIdentityServiceBaseUrl : process.env.INTERNAL_IDENTITY_SERVICE_BASE_URL || 'https://identity-127-0-0-1.sslip.io:3000',

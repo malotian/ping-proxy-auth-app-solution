@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Centralized application configuration
 
-const externaldentityServiceBaseUrl  = process.env.EXTERNAL_IDENTITY_SERVICE_BASE_URL  || 'https://openam-staplesciam-use4-dev.id.forgerock.io';
+const externaldentityServiceBaseUrl  = process.env.EXTERNAL_IDENTITY_SERVICE_BASE_URL  || 'https://identity-qe.staples.com';
 const realm    = process.env.PING_REALM                || 'alpha';
 const internalIdentityServiceBaseUrl = process.env.INTERNAL_IDENTITY_SERVICE_BASE_URL || 'https://identity-127-0-0-1.sslip.io:3000';
 const externalApplicationBaseUrl =  process.env.EXTERNAL_APPLICATION_BASE_URL || 'http://mock-app.ngrok.dev'
