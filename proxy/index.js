@@ -21,9 +21,8 @@ const logger = winston.createLogger({
     winston.format.timestamp(),
     // Custom format: [timestamp] [LEVEL] message {optional meta}
     winston.format.printf(({ level, message, timestamp, ...meta }) => {
-      return `${timestamp} [${level.toUpperCase()}] ${message}${
-        Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
-      }`;
+      return `${timestamp} [${level.toUpperCase()}] ${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
+        }`;
     })
   ),
   transports: [new winston.transports.Console()],

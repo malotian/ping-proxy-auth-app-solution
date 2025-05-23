@@ -21,9 +21,8 @@ const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(({ level, message, timestamp, ...meta }) => {
-      return `${timestamp} [${level.toUpperCase()}] ${message}${
-        Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
-      }`;
+      return `${timestamp} [${level.toUpperCase()}] ${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
+        }`;
     })
   ),
   transports: [new winston.transports.Console()],
@@ -33,7 +32,7 @@ const logger = winston.createLogger({
 app.use((req, res, next) => {
   req.correlationId = req.headers["proxy-correlation-id"] || "N/A";
   const clientIp = req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
-                   req.connection?.remoteAddress || "Unknown";
+    req.connection?.remoteAddress || "Unknown";
   logger.info("Auth Service received request", {
     correlationId: req.correlationId,
     method: req.method,
@@ -136,7 +135,7 @@ async function refreshTokenThrice(refreshToken, correlationId) {
       );
 
       latestRefreshResponse = refreshResponse;
-      logger.info(`Attempt ${attempt}: Token refresh successful`, {correlationId, refreshResponse: refreshResponse.data});
+      logger.info(`Attempt ${attempt}: Token refresh successful`, { correlationId, refreshResponse: refreshResponse.data });
     } catch (refreshError) {
       logger.warn(`Attempt ${attempt}: Token refresh failed`, {
         correlationId,
@@ -183,6 +182,67 @@ function generatePkceChallenge() {
 }
 
 
+function parseSessionCookie(cookieValue) {
+  let parsed;
+  try {
+    parsed = JSON.parse(cookieValue);
+  } catch (err) {
+    throw new Error(`Invalid session cookie JSON: ${err.message}`);
+  }
+
+  const {
+    StateID,
+    NonceID,
+    FingerPrint,
+    TargetUrl
+  } = parsed;
+
+  if (!StateID || !NonceID || !FingerPrint || !TargetUrl) {
+    throw new Error('Session cookie is missing one or more required fields');
+  }
+
+  // Extract optional PKCE verifier
+  const code_verifier = parsed.hasOwnProperty('code_verifier')
+    ? parsed.code_verifier
+    : undefined;
+
+  return { StateID, NonceID, FingerPrint, TargetUrl, code_verifier };
+}
+
+
+function parseSessionCookie(cookieValue) {
+  let parsed;
+  try {
+    parsed = JSON.parse(cookieValue);
+  } catch (err) {
+    throw new Error(`Invalid session cookie JSON: ${err.message}`);
+  }
+
+  // Safely extract all possible fields using hasOwnProperty
+  const SessionID = parsed.hasOwnProperty('SessionID') ? parsed.SessionID : undefined;
+  const AccessToken = parsed.hasOwnProperty('AccessToken') ? parsed.AccessToken : undefined;
+  const IdToken = parsed.hasOwnProperty('IdToken') ? parsed.IdToken : undefined;
+  const RefreshToken = parsed.hasOwnProperty('RefreshToken') ? parsed.RefreshToken : undefined;
+  const FingerPrint = parsed.hasOwnProperty('FingerPrint') ? parsed.FingerPrint : undefined;
+  const KeepMeLoggedIn = parsed.hasOwnProperty('KeepMeLoggedIn') ? parsed.KeepMeLoggedIn : undefined;
+  const StateID = parsed.hasOwnProperty('StateID') ? parsed.StateID : undefined;
+  const NonceID = parsed.hasOwnProperty('NonceID') ? parsed.NonceID : undefined;
+  const TargetUrl = parsed.hasOwnProperty('TargetUrl') ? parsed.TargetUrl : undefined;
+  const code_verifier = parsed.hasOwnProperty('code_verifier') ? parsed.code_verifier : undefined;
+
+  return {
+    SessionID,
+    AccessToken,
+    IdToken,
+    RefreshToken,
+    FingerPrint,
+    KeepMeLoggedIn,
+    StateID,
+    NonceID,
+    TargetUrl,
+    code_verifier
+  };
+}
 
 // ... (all existing code and imports before app.post("/advice")) ...
 // ... (sessionStore, logger, helper functions like computeDeviceFingerPrint, buildStaplesJWT, etc. remain as they are) ...
@@ -208,28 +268,42 @@ app.post("/advice", async (req, res) => {
 
     // Determine if the request is a callback from PING (i.e., URL ends with /callback with a code parameter)
     const isCallbackRequest = contextUrl.pathname.endsWith("/callback") && contextUrl.searchParams.has("code");
+
+
     logger.info("Is callback request?", { correlationId, isCallbackRequest });
 
     let session = null;
+    var NonceID = null;
+    var FingerPrint = null;
+    var TargetUrl = null;
+    var code_verifier = null;
 
     if (cookieSessionValue) {
       // There is a session cookie present
       if (isCallbackRequest) {
         // --- Callback Flow ---
-        logger.info("Callback flow initiated: Parsing session cookie", { correlationId });
+        logger.info("Callback flow initiated: Parsing session cookie", { correlationId, cookieSessionValue });
         let parsedCookie;
         try {
-          parsedCookie = JSON.parse(cookieSessionValue);
+          session = parseSessionCookie(cookieSessionValue);
           logger.debug("Parsed COOKIE_STAPLES_SESSION from callback", { correlationId, parsedCookie });
+          logger.info("Extracted StateID, NonceID, FingerPrint, TargetUrl, and code_verifier from cookie", { correlationId, StateID, NonceID, FingerPrint, TargetUrl, hasCodeVerifier: !!code_verifier });
         } catch (e) {
-          logger.warn("Failed to parse COOKIE_STAPLES_SESSION during callback", { correlationId, error: e.message });
-          return res.status(400).json({ error: "Invalid session cookie format" });
+          if (sessionStore[cookieSessionValue] != null) {
+            logger.info("Session cookie found in session store", { correlationId, cookieSessionValue });
+            session = sessionStore[cookieSessionValue];
+            // StateID = session.StateID;
+            // NonceID = session.NonceID;
+            FingerPrint = session.FingerPrint;
+            //TargetUrl = session.TargetUrl;
+            code_verifier = session.hasOwnProperty('code_verifier') ? session.code_verifier : undefined;
+            logger.info("Extracted StateID, NonceID, FingerPrint, TargetUrl, and code_verifier from session store", { correlationId, FingerPrint, TargetUrl, hasCodeVerifier: !!code_verifier });
+          }
+          else {
+            logger.warn("Session cookie also not found in session store", { correlationId, cookieSessionValue });
+            return res.status(401).json({ error: "Invalid session cookie or format" });
+          }
         }
-        // --- PKCE MODIFICATION: Extract code_verifier from cookie ---
-        const { StateID, NonceID, FingerPrint, TargetUrl, code_verifier } = parsedCookie; // Added code_verifier
-
-        logger.info("Extracted StateID, NonceID, FingerPrint, TargetUrl, and code_verifier from cookie", { correlationId, StateID, NonceID, FingerPrint, TargetUrl, hasCodeVerifier: !!code_verifier});
-
 
         // Validate device fingerprint against the one in cookie
         if (FingerPrint !== deviceId) {
@@ -241,7 +315,7 @@ app.post("/advice", async (req, res) => {
         // Exchange authorization code for tokens with PING (idaas)
         try {
           logger.info("Exchanging authorization code for tokens with PING", { correlationId, code: contextUrl.searchParams.get("code") });
-          
+
           // --- PKCE MODIFICATION: Add code_verifier to token request if present ---
           const tokenRequestBody = {
             grant_type: "authorization_code",
@@ -278,7 +352,7 @@ app.post("/advice", async (req, res) => {
               }),
               { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
             );
-            logger.info("Token exchange (keep_me_logged_in) successful", {correlationId, tokenResponseKeepMeLoggedIn: tokenResponseKeepMeLoggedIn.data});
+            logger.info("Token exchange (keep_me_logged_in) successful", { correlationId, tokenResponseKeepMeLoggedIn: tokenResponseKeepMeLoggedIn.data });
             finalTokenResponse.data.access_token = tokenResponseKeepMeLoggedIn.data.access_token;
             finalTokenResponse.data.id_token = tokenResponseKeepMeLoggedIn.data.id_token;
             finalTokenResponse.data.refresh_token = tokenResponseKeepMeLoggedIn.data.refresh_token;
@@ -293,7 +367,7 @@ app.post("/advice", async (req, res) => {
             // if (latestRefreshTokenResponseRemeberMe?.data?.access_token) {
             //   finalTokenResponse.data.access_token = latestRefreshTokenResponseRemeberMe.data.access_token;
             // }
-            
+
             // if (latestRefreshTokenResponseRemeberMe?.data?.id_token) {
             //   finalTokenResponse.data.id_token = latestRefreshTokenResponseRemeberMe.data.id_token;
             // }                        
@@ -311,15 +385,13 @@ app.post("/advice", async (req, res) => {
             StateID,
             NonceID,
             TargetUrl,
-            ...(tokenResponse.data.keep_me_logged_in 
+            ...(tokenResponse.data.keep_me_logged_in
               ? {
-                  OriginalAccessToken: tokenResponse.data.access_token,
-                  OriginalIdToken:    tokenResponse.data.id_token,
-                  OriginalRefreshToken: tokenResponse.data.refresh_token,
-                }
+                OriginalAccessToken: tokenResponse.data.access_token,
+                OriginalIdToken: tokenResponse.data.id_token,
+                OriginalRefreshToken: tokenResponse.data.refresh_token,
+              }
               : {}),
-
-
 
           };
 
@@ -339,7 +411,10 @@ app.post("/advice", async (req, res) => {
           logger.error("Token exchange failed during callback", { correlationId, error: error.response ? error.response.data : error.message });
           return res.status(500).json({ error: "Token exchange failed" });
         }
-      } else {
+      }
+
+
+      else {
         // --- Non-Callback Flow with existing session cookie ---
         // ... (This section remains largely the same as your previous version) ...
         logger.info("Non-callback flow: Treating session cookie as SessionID", { correlationId, sessionCookie: cookieSessionValue });
@@ -358,18 +433,18 @@ app.post("/advice", async (req, res) => {
                 logger.info("Refreshing tokens using RefreshToken", { correlationId, SessionID: sessionId });
                 const latestRefreshResponse = await refreshTokenThrice(session.RefreshToken, correlationId);
                 if (latestRefreshResponse && latestRefreshResponse.data) {
-                    session.AccessToken = latestRefreshResponse.data.access_token;
-                    session.IdToken = latestRefreshResponse.data.id_token;
-                    if(latestRefreshResponse.data.refresh_token) {
-                        session.RefreshToken = latestRefreshResponse.data.refresh_token;
-                    }
-                    session.FingerPrint = deviceId;
-                    sessionStore[sessionId] = session;
-                    logger.info("Session successfully refreshed", { correlationId, SessionID: sessionId });
+                  session.AccessToken = latestRefreshResponse.data.access_token;
+                  session.IdToken = latestRefreshResponse.data.id_token;
+                  if (latestRefreshResponse.data.refresh_token) {
+                    session.RefreshToken = latestRefreshResponse.data.refresh_token;
+                  }
+                  session.FingerPrint = deviceId;
+                  sessionStore[sessionId] = session;
+                  logger.info("Session successfully refreshed", { correlationId, SessionID: sessionId });
                 } else {
-                   logger.warn("Token refresh attempt did not yield new tokens or failed. Invalidating session.", { correlationId, SessionID: sessionId });
-                   delete sessionStore[sessionId];
-                   session = null;
+                  logger.warn("Token refresh attempt did not yield new tokens or failed. Invalidating session.", { correlationId, SessionID: sessionId });
+                  delete sessionStore[sessionId];
+                  session = null;
                 }
               } catch (err) {
                 logger.error("Token refresh failed. Invalidating session.", { correlationId, SessionID: sessionId, error: err.message });
@@ -390,21 +465,44 @@ app.post("/advice", async (req, res) => {
       }
     }
 
+    var sessionExist = session && session.AccessToken && !isAccessTokenExpired(session);
+    const isChangeUsername = contextUrl.pathname.endsWith("/change-username");
+    const isChangePassword = contextUrl.pathname.endsWith("/change-password");
+
     // Validate session and issue JWT if AccessToken is valid
-    if (session && session.AccessToken && !isAccessTokenExpired(session)) {
-      logger.info("Session valid. Proceeding to generate JWT", { correlationId, SessionID: session.SessionID });
-      const jwtToken = buildStaplesJWT(session);
-      logger.info("JWT built and session authenticated", { correlationId, KeepMeLoggedIn: session.KeepMeLoggedIn });
-      return res.json({
-        adviceHeaders: {
-          HTTP_STAPLES_JWT: jwtToken,
-          HTTP_STAPLES_COOKIE_VALUE: session.SessionID,
-        },
-      });
+    if (sessionExist) {
+
+      logger.info("Session is valid.");
+
+
+      var acrValues = null;
+      if (isChangePassword) {
+        // --- Change Password Flow ---
+        logger.info("Change password flow initiated", { correlationId });
+        acrValues = "UpdatePassword";
+
+      } else if (isChangeUsername) {
+        // --- Change Username Flow ---
+        logger.info("Change username flow initiated", { correlationId });
+        acrValues = "Staples_ChangeUsername";
+      }
+      else {
+        logger.info("Session valid. Proceeding to generate JWT", { correlationId, SessionID: session.SessionID });
+        const jwtToken = buildStaplesJWT(session);
+        logger.info("JWT built and session authenticated", { correlationId, KeepMeLoggedIn: session.KeepMeLoggedIn });
+        return res.json({
+          adviceHeaders: {
+            HTTP_STAPLES_JWT: jwtToken,
+            HTTP_STAPLES_COOKIE_VALUE: session.SessionID,
+          },
+        });
+      }
     }
 
     // No valid session available: Initiate new authentication flow
-    logger.info("No valid session available. Initiating new authentication flow", { correlationId });
+    if (!isChangeUsername && !isChangePassword) {
+      logger.info("No valid session available. Initiating new authentication flow", { correlationId });
+    }
     const stateId = uuidv4();
     const nonceId = uuidv4();
     const txnId = 'app-txn-' + uuidv4();
@@ -457,8 +555,9 @@ app.post("/advice", async (req, res) => {
           const authnParamsPAR = new URLSearchParams({
             client_id: config.idaasClientID,
             request_uri: request_uri,
-            response_type: config.response_type,         
-            redirect_uri: config.appCallbackEndpoint,   
+            response_type: config.response_type,
+            redirect_uri: config.appCallbackEndpoint,
+            ...acrValues ? { acr_values: acrValues } : {},
           });
           authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParamsPAR.toString()}`;
           // --- PKCE MODIFICATION: Store code_verifier in the cookie payload ---
@@ -475,7 +574,7 @@ app.post("/advice", async (req, res) => {
 
     if (!authnUrl) { // If PAR not used, or PAR failed
       if (config.usePAR) {
-          logger.warn("PAR was enabled but failed or did not produce a request_uri, using standard authorization flow (without PKCE for this fallback example, unless added separately).", { correlationId });
+        logger.warn("PAR was enabled but failed or did not produce a request_uri, using standard authorization flow (without PKCE for this fallback example, unless added separately).", { correlationId });
       }
       // Standard flow (original code, could also add PKCE here if desired for non-PAR flow)
       const authnParams = new URLSearchParams({
@@ -486,6 +585,7 @@ app.post("/advice", async (req, res) => {
         state: stateId,
         nonce: nonceId,
         txn_id: txnId,
+        ...acrValues ? { acr_values: acrValues } : {},
         // Note: If you want PKCE for non-PAR flow as well, generate and add here,
         // and store code_verifier in sessionCookiePayload.
         // const pkce = generatePkceChallenge();
@@ -495,16 +595,18 @@ app.post("/advice", async (req, res) => {
       });
       authnUrl = `${config.idaasAuthorizeEndpoint}?${authnParams.toString()}`;
     }
-    
+
     logger.info("Composed COOKIE_STAPLES_SESSION payload with potentially code_verifier", { correlationId, sessionCookiePayload: Object.keys(sessionCookiePayload) }); // Log keys to avoid logging sensitive data
     logger.info("Constructed PING Authentication URL", { correlationId, authnUrl, usingPAR: authnUrl.includes("request_uri="), usingPKCE: !!sessionCookiePayload.code_verifier });
 
     return res.json({
       adviceHeaders: {
         HTTP_STAPLES_AUTHN_URL: authnUrl,
-        HTTP_STAPLES_COOKIE_VALUE: JSON.stringify(sessionCookiePayload),
+        HTTP_STAPLES_COOKIE_VALUE: JSON.stringify(sessionCookiePayload)
       },
     });
+
+
   } catch (err) {
     logger.error("Error processing /advice", {
       correlationId,
