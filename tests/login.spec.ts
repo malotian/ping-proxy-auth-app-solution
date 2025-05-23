@@ -13,7 +13,7 @@ const config = {
   ping: {
     baseUrl: 'https://identity-qe.staples.com', // Domain to clear cookies for
     realm: 'alpha',
-    usePAR: true, // << SET THIS TO true TO TEST PAR, false FOR STANDARD FLOW >>
+    usePAR: false, // << SET THIS TO true TO TEST PAR, false FOR STANDARD FLOW >>
     parEndpoint: 'https://identity-qe.staples.com/am/oauth2/realms/root/realms/alpha/par', // Example PAR endpoint
   },
   clients: {
@@ -269,7 +269,31 @@ async function loginAndCaptureCode(
   page.context().setGeolocation({ latitude: 37.7749, longitude: -122.4194 });
 
 
-  await page.goto(authUrl);
+  // --- SET COOKIE AND MODIFY URL BEFORE NAVIGATION ---
+  const urlObject = new URL(authUrl);
+  const cookieDomain = urlObject.hostname;
+  const traceIdValue = crypto.randomUUID();
+
+  const cookieToSet = {
+    name: 'staples-cookie-trace-id', // Or just 'traceId' if that's preferred
+    value: traceIdValue,
+    domain: cookieDomain,
+    path: '/',
+    secure: urlObject.protocol === 'https:',
+    httpOnly: true,
+  };
+
+  console.log(`🍪 Setting cookie: Name='${cookieToSet.name}', Value='${cookieToSet.value}', Domain='${cookieToSet.domain}'`);
+  await page.context().addCookies([cookieToSet]);
+
+  const queryStringParamName = 'staples-querystring-trace-id';
+  urlObject.searchParams.set(queryStringParamName, traceIdValue);
+
+  const modifiedAuthUrl = urlObject.href; // This is the URL to navigate to
+
+  console.log(`🔗 Modified Auth URL with trace ID: ${modifiedAuthUrl}`);
+
+  await page.goto(modifiedAuthUrl); // Use the modified URL here
 
   if (tc.showGuest) {
     await expect(page.getByRole('link', { name: 'Shop as Guest' })).toBeVisible();

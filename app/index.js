@@ -21,9 +21,8 @@ const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(({ level, message, timestamp, ...meta }) => {
-      return `${timestamp} [${level.toUpperCase()}] ${message}${
-        Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
-      }`;
+      return `${timestamp} [${level.toUpperCase()}] ${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
+        }`;
     })
   ),
   transports: [new winston.transports.Console()],
@@ -66,8 +65,30 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/", (req, res) => {
+  logger.info("Processing / request", { correlationId: req.correlationId });
+  // Send a simple HTML page with a link to /login
+  res.send(`
+    <h1>Welcome</h1>
+    <p><a href="/login">Login</a></p>
+  `);
+});
+
+app.get("/change-username", (req, res) => {
+  handleIncoming(req, res);
+});
+
+app.get("/change-password", (req, res) => {
+  handleIncoming(req, res);
+});
+
 // /login Route - Follows the sequence diagram exactly
 app.get("/login", (req, res) => {
+  handleIncoming(req, res);
+});
+
+function handleIncoming(req, res) {
+
   const { correlationId, authnUrl, staplesJwtToken, staplesSessionId } = req;
   logger.info("Processing /login request", { correlationId });
 
@@ -114,9 +135,9 @@ app.get("/login", (req, res) => {
     });
 
     return res.render("jsonViewer", { inputData: expandTimestamps(parseJwt(staplesJwtToken, true)) });
-  
+
   });
-});
+}
 
 // /callback Route - Handles redirection from PING as per sequence diagram
 app.get("/callback", async (req, res) => {
@@ -156,7 +177,7 @@ app.get("/callback", async (req, res) => {
 
       logger.info("Redirecting from /callback to TargetUrl", { correlationId, TargetUrl: decoded.TargetUrl });
       return res.redirect(decoded.TargetUrl);
-    
+
     });
   } catch (error) {
     logger.error("Error processing /callback", { correlationId, error: error.message });
