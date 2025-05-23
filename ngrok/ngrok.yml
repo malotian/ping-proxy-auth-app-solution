@@ -1,0 +1,12 @@
+version: "2"
+authtoken: 2wCqmf2qYihR6yO3aZqmFSIfsuc_7KuD1Zs2c3pks4dHgFnmf
+log: stdout
+tunnels:
+  proxy-tunnel:
+    proto: http
+    addr: proxy:3000
+    hostname: mock-app.ngrok.dev
+  identity-tunnel:
+    proto: http
+    addr: proxy:3000
+    hostname: mock-identity.ngrok.dev    

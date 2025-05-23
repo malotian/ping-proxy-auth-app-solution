@@ -8,6 +8,7 @@ const config = require("./config");
 const winston = require("winston");
 const fs = require("fs");
 const https = require("https");
+const http = require("http");
 
 const app = express();
 app.use(express.json());
@@ -20,9 +21,8 @@ const logger = winston.createLogger({
     winston.format.timestamp(),
     // Custom format: [timestamp] [LEVEL] message {optional meta}
     winston.format.printf(({ level, message, timestamp, ...meta }) => {
-      return `${timestamp} [${level.toUpperCase()}] ${message}${
-        Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
-      }`;
+      return `${timestamp} [${level.toUpperCase()}] ${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
+        }`;
     })
   ),
   transports: [new winston.transports.Console()],
@@ -39,17 +39,6 @@ app.use((req, res, next) => {
   });
   next();
 });
-
-// Define a mapping for hosts to target URLs.
-const targets = {
-  "app.lab.com:3000": config.mainAppUrl, // App application (TierA)
-  "auth.lab.com:3000": config.authServiceTarget, // Auth service target
-  "identity.lab.com:3000": config.identityServiceUrl, // Auth service target
-
-  //// inacse localhost is used
-  "localhost:3000": config.mainAppUrl, // App application (TierA)
-  "localhost:3000": config.authServiceTarget, // Auth service target
-};
 
 // Pre-proxy middleware: only for the app domain, fetch advice headers as per sequence diagram.
 app.use(async (req, res, next) => {
@@ -74,8 +63,25 @@ app.use(async (req, res, next) => {
     url: req.originalUrl,
   });
 
-  // Only intercept requests to identity.lab.com
-  if (host && host.toLowerCase().startsWith("identity.lab.com")) {
+  internalIdentityServiceBaseUrl = config.internalIdentityServiceBaseUrl;
+  internalApplicationBaseUrl = config.internalApplicationBaseUrl;
+
+  logger.info("parsing urls", {
+    internalIdentityServiceBaseUrl,
+    internalApplicationBaseUrl
+  });
+
+  const identityHost = new URL(config.internalIdentityServiceBaseUrl).host.toLowerCase();
+  const mainAplicationPublicHost = new URL(config.externalApplicationBaseUrl).host.toLowerCase();
+
+  logger.info("hosts ", {
+    identityHost,
+    mainAplicationPublicHost,
+    host
+  });
+
+  // Only intercept requests to identity-127-0-0-1.sslip.io
+  if (host && host.toLowerCase().startsWith(identityHost)) {
     // Parse the full URL so we can inspect path and query params
     const contextUrl = new URL(req.originalUrl, `https://${host}`);
 
@@ -94,11 +100,11 @@ app.use(async (req, res, next) => {
     }
   }
   // Only call the advice service if this request is for the app domain (TierA endpoint).
-  else if (host && host.toLowerCase().startsWith("app.lab.com")) {
+  else if (host && host.toLowerCase().startsWith(mainAplicationPublicHost)) {
     try {
       logger.info("Forwarding complete HTTP Request Context to Auth service for advice", {
         correlationId,
-        targetAdviceService: config.authServiceUrl,
+        targetAdviceService: config.internalAuthServiceAdviceEndpoint,
       });
       const context = {
         correlationId: correlationId,
@@ -119,7 +125,7 @@ app.use(async (req, res, next) => {
       };
 
       // Call the Auth service to get advice headers.
-      const adviceResponse = await axios.post(config.authServiceUrl, context, {
+      const adviceResponse = await axios.post(config.internalAuthServiceAdviceEndpoint, context, {
         headers: { "proxy-correlation-id": correlationId },
       });
       logger.info("Received advice response from Auth service", {
@@ -148,12 +154,12 @@ app.use(
   "/",
   createProxyMiddleware({
     // Default target will be overridden by the router.
-    target: config.mainAppUrl,
+    target: config.internalApplicationBaseUrl,
     changeOrigin: true,
     router: (req) => {
       const correlationId = req.correlationId;
       const host = req.headers.host;
-      const target = targets[host.toLowerCase()] || config.mainAppUrl;
+      const target = config.targets[host.toLowerCase()] || config.internalApplicationBaseUrl;
       logger.info("Routing request", {
         correlationId,
         host,
@@ -192,10 +198,17 @@ app.use(
   })
 );
 
-const key = fs.readFileSync(config.tlsKey);
-const cert = fs.readFileSync(config.tlsCert);
 
-https.createServer({ key, cert }, app).listen(config.port, "0.0.0.0", () => {
-  logger.info(`proxy running on port ${config.port}`);
-});
 
+if (config.useHttps) {
+  const key = fs.readFileSync(config.tlsKey);
+  const cert = fs.readFileSync(config.tlsCert);
+
+  https.createServer({ key, cert }, app).listen(config.port, '0.0.0.0', () => {
+    logger.info(`HTTPS proxy running on port ${config.port}`);
+  });
+} else {
+  http.createServer(app).listen(config.port, '0.0.0.0', () => {
+    logger.info(`HTTP proxy running on port ${config.port}`);
+  });
+}

@@ -57,7 +57,7 @@
           "AccessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
           "SessionID": "07fa56d9-43b0-474f-892b-4af1ef2f4cc1",
           "RefreshToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
-          "RememberMe": false,
+          "KeepMeLoggedIn": false,
           "iat": 1743029727,
           "exp": 1743033327
         },

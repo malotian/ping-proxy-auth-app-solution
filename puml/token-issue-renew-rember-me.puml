@@ -3,16 +3,16 @@ start
 
 :User initiates login via /authorize;
 :Redirects to Ping for authentication;
-:User authenticates (optionally selects Remember Me);
+:User authenticates (optionally selects Keep Me Logged In);
 :Ping redirects with authorization code;
 
 :Auth receives authorization code;
 :Auth exchanges code with ClientID/ClientSecret;
-:Receives AccessToken, RefreshToken, RememberMe flag;
+:Receives AccessToken, RefreshToken, KeepMeLoggedIn flag;
 
-if (RememberMe == true?) then (yes)
+if (KeepMeLoggedIn == true?) then (yes)
   :Auth performs backchannel token exchange;
-  :Uses RememberMeClientID/ClientSecret;
+  :Uses KeepMeLoggedInClientID/ClientSecret;
   :Receives long-lived AccessToken and RefreshToken;
 else (no)
   :Proceed with short-lived tokens;
@@ -23,8 +23,8 @@ endif
 repeat
   :AccessToken expires;
   if (RefreshToken is still valid?) then (yes)
-    if (RememberMe == true?) then (yes)
-      :Renew tokens with RememberMeClientID/ClientSecret;
+    if (KeepMeLoggedIn == true?) then (yes)
+      :Renew tokens with KeepMeLoggedInClientID/ClientSecret;
     else (no)
       :Renew tokens with ClientID/ClientSecret;
     endif

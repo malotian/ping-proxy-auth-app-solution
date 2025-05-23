@@ -41,6 +41,8 @@ build/Release
 node_modules/
 jspm_packages/
 
+test-logs/
+
 # TypeScript v1 declaration files
 typings/
 
@@ -108,3 +110,7 @@ dist
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+key.jwk
+others/others/service-account-id-to-token.sh
+others/others/payload.json
+others/others/jwt.txt

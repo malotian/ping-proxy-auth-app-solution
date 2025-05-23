@@ -2,37 +2,58 @@ services:
   app:
     build: ./app
     ports:
-      - '3001:3001'
+      - "3001:3001"
     environment:
       - PORT=3001
     networks:
-      - lab.com
-    hostname: app.lab.com
+      - sslip.io
+    hostname: app-127-0-0-1.sslip.io
   auth:
     build: ./auth
     ports:
-      - '3002:3002'
+      - "3002:3002"
     environment:
       - PORT=3002
+      - EXTERNAL_APPLICATION_BASE_URL=https://mock-app.ngrok.dev
+      - INTERNAL_IDENTITY_SERVICE_BASE_URL=https://mock-identity.ngrok.dev
+      - EXTERNAL_IDENTITY_SERVICE_BASE_URL=https://identity-qe.staples.com
+      - PING_REALM=alpha
     networks:
-      - lab.com
-    hostname: auth.lab.com
+      - sslip.io
+    hostname: auth-127-0-0-1.sslip.io
   proxy:
     build: ./proxy
     ports:
-      - '3000:3000'
+      - "3000:3000"
     environment:
       - PORT=3000
-      - 'TARGET=http://app.lab.com:3001'
       - TLS_KEY=/certs/key.pem
       - TLS_CERT=/certs/cert.pem
+      - USE_HTTPS=false // false for ngrok
+      - INTERNAL_IDENTITY_SERVICE_BASE_URL=https://mock-identity.ngrok.dev
+      - EXTERNAL_IDENTITY_SERVICE_BASE_URL,=https://identity-qe.staples.com
+      - PING_REALM=alpha
     volumes:
-      - ./certs:/certs:ro      
+      - ./certs:/certs:ro
     depends_on:
       - app
     networks:
-      - lab.com
-    hostname: proxy.lab.com
+      - sslip.io
+    hostname: proxy-127-0-0-1.sslip.io
+  ngrok:
+    image: ngrok/ngrok:latest
+    ports:
+      - "4040:4040"
+    depends_on:
+      - proxy
+    volumes:
+      - ./ngrok/ngrok.yml:/etc/ngrok/ngrok.yml:ro
+    command:
+      - start
+      - --all
+      - --config=/etc/ngrok/ngrok.yml
+    networks:
+      - sslip.io
 networks:
-  lab.com:
+  sslip.io:
     driver: bridge
