@@ -208,7 +208,7 @@ async function buildAuthUrl(
       const paramsForAuthorize: Record<string, any> = {
         client_id: config.clients.regular.clientId,
         request_uri: request_uri,
-        acr_values: '__staples_h_device_profile',
+        //acr_values: '__staples_h_device_profile',
       };
       if (tc.jumpUrl) paramsForAuthorize.jumpUrl = tc.jumpUrl;
       if (tc.showGuest) paramsForAuthorize.showGuest = tc.showGuest;
@@ -231,7 +231,7 @@ async function buildAuthUrl(
     state,
     nonce,
     showGuest: tc.showGuest,
-    acr_values: '__staples_h_device_profile'
+    //acr_values: '__staples_h_device_profile'
   };
   if (tc.jumpUrl) params.jumpUrl = tc.jumpUrl;
 
