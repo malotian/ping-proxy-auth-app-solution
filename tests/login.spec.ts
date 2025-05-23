@@ -13,7 +13,8 @@ const config = {
   ping: {
     baseUrl: 'https://identity-qe.staples.com', // Domain to clear cookies for
     realm: 'alpha',
-    usePAR: true, // << SET THIS TO true TO TEST PAR, false FOR STANDARD FLOW >>
+
+    usePAR: false, // << SET THIS TO true TO TEST PAR, false FOR STANDARD FLOW >>
     parEndpoint: 'https://identity-qe.staples.com/am/oauth2/realms/root/realms/alpha/par', // Example PAR endpoint
   },
   clients: {
@@ -208,7 +209,7 @@ async function buildAuthUrl(
       const paramsForAuthorize: Record<string, any> = {
         client_id: config.clients.regular.clientId,
         request_uri: request_uri,
-        acr_values: '__staples_h_device_profile',
+        //acr_values: '__staples_h_device_profile',
       };
       if (tc.jumpUrl) paramsForAuthorize.jumpUrl = tc.jumpUrl;
       if (tc.showGuest) paramsForAuthorize.showGuest = tc.showGuest;
@@ -231,7 +232,7 @@ async function buildAuthUrl(
     state,
     nonce,
     showGuest: tc.showGuest,
-    acr_values: '__staples_h_device_profile'
+    //acr_values: '__staples_h_device_profile'
   };
   if (tc.jumpUrl) params.jumpUrl = tc.jumpUrl;
 
