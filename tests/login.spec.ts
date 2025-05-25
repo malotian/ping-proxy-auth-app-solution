@@ -19,7 +19,7 @@ const config = {
   clients: {
     regular: {
       clientId: 'staples_dotcom_application_client_id',
-      clientSecret: 'staples_dotcom_application_client_secret',
+      clientSecret: 'staples_dotcom_application_client_secret', // Will not be used for auth code grant / PAR
     },
     keepMeLoggedIn: {
       clientId: 'staples_dotcom_application_remember_me_client_id',
@@ -195,16 +195,17 @@ async function buildAuthUrl(
   const state = crypto.randomBytes(16).toString('hex');
   const nonce = crypto.randomBytes(16).toString('hex');
   let codeVerifierToReturn: string|undefined;
+  const pkce = generatePkceChallenge(); // PKCE is always generated now
+  codeVerifierToReturn = pkce.code_verifier;
 
   // 1) Pushed Auth Request path
   if (config.ping.usePAR && config.ping.parEndpoint) {
     console.log('    🚀 Using PAR + PKCE');
-    const pkce = generatePkceChallenge();
-    codeVerifierToReturn = pkce.code_verifier;
-
+    // PKCE was generated above
+    
     const parPayload: Record<string, any> = {
       client_id: config.clients.regular.clientId,
-      client_secret: config.clients.regular.clientSecret,
+      // client_secret: config.clients.regular.clientSecret, // REMOVED: Relying on PKCE, client makes unauthenticated PAR
       response_type: 'code',
       scope: 'openid profile email write',
       redirect_uri: config.redirectUri,
@@ -236,7 +237,8 @@ async function buildAuthUrl(
   }
 
   // 2) Standard authorization URL
-  console.log('    🛡️ Using standard auth URL');
+  console.log('    🛡️ Using standard auth URL + PKCE');
+  // PKCE was generated above
   const params: Record<string, any> = {
     client_id: config.clients.regular.clientId,
     redirect_uri: config.redirectUri,
@@ -244,6 +246,8 @@ async function buildAuthUrl(
     scope: 'openid profile email write',
     state,
     nonce,
+    code_challenge: pkce.code_challenge, // ADDED for standard flow
+    code_challenge_method: pkce.code_challenge_method, // ADDED for standard flow
   };
   if (!tc.acrValue) {
     params.showGuest = tc.showGuest;
@@ -334,20 +338,22 @@ async function loginAndCaptureCode(
   });
 }
 
-// Exchange code → tokens
 async function exchangeAuthCode(tokenEndpoint: string, code: string, codeVerifier?: string) {
   console.log(`\n🔁 Exchanging code at ${tokenEndpoint}`);
   const payload: any = {
     grant_type: 'authorization_code',
     code,
     redirect_uri: config.redirectUri,
-    client_id: config.clients.regular.clientId,
-    client_secret: config.clients.regular.clientSecret,
+    client_id: config.clients.regular.clientId, // Uses 'regular' client
+    // client_secret: config.clients.regular.clientSecret, // REMOVED as per instruction
   };
-  if (codeVerifier) {
+  if (codeVerifier) { 
     payload.code_verifier = codeVerifier;
     console.log('    🔑 Using PKCE verifier');
+  } else {
+    console.warn('    ⚠️ PKCE verifier not provided for token exchange!'); // This line should not be hit
   }
+  // The error occurs on the next line (axios.post)
   const res = await axios.post(tokenEndpoint, qs.stringify(payload), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
@@ -357,6 +363,10 @@ async function exchangeAuthCode(tokenEndpoint: string, code: string, codeVerifie
 
 // Short-lived token exchange (e.g. for keep-me-logged-in)
 async function exchangeToken(tokenEndpoint: string, data: Record<string, any>) {
+  // This function is not directly affected by the PKCE change for authorization_code grant
+  // but it uses client_secret from config.clients.keepMeLoggedIn if it's used for client credentials or similar.
+  // If this function were to be used for a client that should also adhere to "no client_secret",
+  // it would need adjustment based on the specific grant_type.
   const res = await axios.post(tokenEndpoint, qs.stringify(data), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
@@ -410,7 +420,7 @@ for (const tc of testCases) {
   const segments = [
     'Auth Flow',
     tc.acrValue ? `ACR=${tc.acrValue}` : `LoginType=${tc.loginType}`,
-    `PAR=${config.ping.usePAR}`,
+    `PAR=${config.ping.usePAR}`, // PAR itself still togglable, but PKCE is now always on
     `keepMeLoggedIn=${tc.keepMeLoggedIn}`,
   ];
   if (!tc.acrValue) {
@@ -427,8 +437,13 @@ for (const tc of testCases) {
     if (tc.acrValue === 'Staples_ChangeUsername') {
       console.log('🔏 Seeding session with standard login');
       const standardTc: TestCase = { ...tc, acrValue: undefined };
-      const { authUrl: loginUrl } = await buildAuthUrl(openid.authorization_endpoint, standardTc);
-      await loginAndCaptureCode(page, loginUrl, standardTc);
+      const { authUrl: loginUrl, codeVerifier: seedCodeVerifier } = await buildAuthUrl(openid.authorization_endpoint, standardTc);
+      const { authCode: seedAuthCode } = await loginAndCaptureCode(page, loginUrl, standardTc);
+      // Exchange the seed code to complete the login, even though we don't use the tokens directly
+      // This ensures the session is fully established.
+      if (seedAuthCode) {
+        await exchangeAuthCode(tokenUrl, seedAuthCode, seedCodeVerifier);
+      }
     }
 
     // Now invoke the real flow (standard or ACR)
@@ -437,7 +452,8 @@ for (const tc of testCases) {
     expect(authCode).toBeTruthy();
 
     // Exchange for tokens & assertions
-    const tokens = await exchangeAuthCode(tokenUrl, authCode, codeVerifier);
+    // codeVerifier will always be present from buildAuthUrl
+    const tokens = await exchangeAuthCode(tokenUrl, authCode, codeVerifier!);
     decodeJwt(tokens.access_token, 'Access Token');
     decodeJwt(tokens.id_token, 'ID Token');
     expect(tokens.access_token).toBeTruthy();
