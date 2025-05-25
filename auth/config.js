@@ -27,7 +27,7 @@ module.exports = {
   appCallbackEndpoint:  `${externalApplicationBaseUrl}/callback`,
 
   // OAuth2 settings
-  scope:         process.env.OIDC_SCOPE          || 'openid',
+  scope:         process.env.OIDC_SCOPE          || 'openid profile email',
   response_type: process.env.OIDC_RESPONSE_TYPE  || 'code',
 
   // API keys (optional)

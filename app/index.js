@@ -21,9 +21,8 @@ const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(({ level, message, timestamp, ...meta }) => {
-      return `${timestamp} [${level.toUpperCase()}] ${message}${
-        Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
-      }`;
+      return `${timestamp} [${level.toUpperCase()}] ${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
+        }`;
     })
   ),
   transports: [new winston.transports.Console()],
@@ -66,10 +65,32 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/", (req, res) => {
+  logger.info("Processing / request", { correlationId: req.correlationId });
+  // Send a simple HTML page with a link to /login
+  res.send(`
+    <h1>Welcome</h1>
+    <p><a href="/login">Login</a></p>
+  `);
+});
+
+app.get("/change-username", (req, res) => {
+  renderJwt(req, res);
+});
+
+app.get("/change-password", (req, res) => {
+  renderJwt(req, res);
+});
+
 // /login Route - Follows the sequence diagram exactly
 app.get("/login", (req, res) => {
+  renderJwt(req, res);
+});
+
+function renderJwt(req, res) {
+
   const { correlationId, authnUrl, staplesJwtToken, staplesSessionId } = req;
-  logger.info("Processing /login request", { correlationId });
+  logger.info("Processing request", { correlationId, url: req.url });
 
   // If HTTP_STAPLES_AUTHN_URL header is present, initiate new authentication flow.
   if (authnUrl) {
@@ -86,17 +107,17 @@ app.get("/login", (req, res) => {
   }
 
   if (!staplesJwtToken) {
-    logger.warn("No HTTP_STAPLES_JWT token provided in /login", { correlationId });
+    logger.warn("No HTTP_STAPLES_JWT token provided", { correlationId });
     return res.status(401).json({ error: "No HTTP_STAPLES_JWT token provided" });
   }
 
   jwt.verify(staplesJwtToken, getSigningKey, { algorithms: ["RS256"] }, (err, decoded) => {
     if (err) {
-      logger.error("JWT verification failed in /login", { correlationId, error: err.message });
+      logger.error("JWT verification failed", { correlationId, error: err.message });
       return res.status(401).json({ error: "Invalid staplesJwtToken", details: err.message });
     }
 
-    logger.info("JWT verified successfully in /login", { correlationId, decoded });
+    logger.info("JWT verified successfully", { correlationId, decoded });
     const keepMeLoggedIn = decoded.KeepMeLoggedIn === true;
     const cookieOptions = {
       httpOnly: true,
@@ -106,7 +127,7 @@ app.get("/login", (req, res) => {
 
     // Set session cookie as per sequence diagram instructions.
     res.cookie("COOKIE_STAPLES_SESSION", staplesSessionId, cookieOptions);
-    logger.info("Session cookie set in /login", {
+    logger.info("Session cookie set", {
       correlationId,
       sessionId: staplesSessionId,
       keepMeLoggedIn,
@@ -114,9 +135,9 @@ app.get("/login", (req, res) => {
     });
 
     return res.render("jsonViewer", { inputData: expandTimestamps(parseJwt(staplesJwtToken, true)) });
-  
+
   });
-});
+}
 
 // /callback Route - Handles redirection from PING as per sequence diagram
 app.get("/callback", async (req, res) => {
@@ -155,8 +176,11 @@ app.get("/callback", async (req, res) => {
       });
 
       logger.info("Redirecting from /callback to TargetUrl", { correlationId, TargetUrl: decoded.TargetUrl });
-      return res.redirect(decoded.TargetUrl);
-    
+      const urlObj = new URL(decoded.TargetUrl);
+      const redirectPath = urlObj.pathname + (urlObj.search || "");
+      logger.info("Redirecting to TargetUrl", { correlationId, redirectPath });
+      return renderJwt(req, res); 
+
     });
   } catch (error) {
     logger.error("Error processing /callback", { correlationId, error: error.message });

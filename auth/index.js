@@ -1,5 +1,5 @@
 require("dotenv").config();
-const express = require("express");
+const express =require("express");
 const axios = require("axios");
 const cookieParser = require("cookie-parser");
 const { v4: uuidv4 } = require("uuid");
@@ -31,9 +31,9 @@ const logger = winston.createLogger({
 
 // Attach correlationId and log incoming request details
 app.use((req, res, next) => {
-  req.correlationId = req.headers["proxy-correlation-id"] || "N/A";
+  req.correlationId = req.headers["proxy-correlation-id"] || uuidv4(); // Ensure correlationId always exists
   const clientIp = req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
-                   req.connection?.remoteAddress || "Unknown";
+                   req.socket?.remoteAddress || "Unknown"; // Use req.socket for newer Node/Express
   logger.info("Auth Service received request", {
     correlationId: req.correlationId,
     method: req.method,
@@ -62,7 +62,7 @@ app.get("/.well-known/jwks.json", (req, res) => {
     keys: [
       {
         kty: "RSA",
-        kid: "staples-kid",
+        kid: "staples-kid", // Consistent Key ID
         use: "sig",
         alg: "RS256",
         n: n,
@@ -75,6 +75,7 @@ app.get("/.well-known/jwks.json", (req, res) => {
 // Function: Compute device fingerprint based on IP and User-Agent
 function computeDeviceFingerPrint(context, secretKey = null) {
   if (!context || !context.ip || !context.userAgent) {
+    logger.warn("Missing ip or userAgent for fingerprint computation", { context });
     throw new Error("Missing required context fields: ip and userAgent");
   }
 
@@ -94,24 +95,39 @@ function computeDeviceFingerPrint(context, secretKey = null) {
 
 // Utility functions to check token states
 function isAccessTokenExpired(session) {
-  // In real scenarios, implement actual expiry checks
-  return session.AccessToken === "expired";
+  // In real scenarios, decode session.AccessToken and check its 'exp' claim
+  // For now, placeholder:
+  if (session && session.AccessToken === "expired") return true; // For testing
+  if (session && session.AccessToken) {
+    try {
+      const decoded = jwt.decode(session.AccessToken);
+      return decoded.exp * 1000 < Date.now();
+    } catch (e) {
+      logger.warn("Failed to decode access token for expiry check", { error: e.message, SessionID: session.SessionID });
+      return true; // Treat as expired if undecodable
+    }
+  }
+  return true; // No access token means it's effectively expired/missing
 }
 
 function isRefreshTokenValid(session) {
-  // In real scenarios, implement proper validation of RefreshToken
-  return session.RefreshToken && session.RefreshToken !== "invalid";
+  // In real scenarios, implement proper validation (e.g., check against a revocation list or its own expiry if applicable)
+  return session && session.RefreshToken && session.RefreshToken !== "invalid";
 }
 
 // Function: Build StaplesJWT from session details
 function buildStaplesJWT(session) {
-  const payload = session;
+  // Ensure sensitive data like code_verifier is not in the JWT payload unless intended
+  const payload = { ...session };
+  delete payload.code_verifier; // PKCE verifier should not be in the JWT
+  delete payload.StateID;       // State should not be in JWT
+  delete payload.NonceID;       // Nonce should not be in JWT
 
-  logger.debug("Building StaplesJWT payload", { payload });
+  logger.debug("Building StaplesJWT payload", { payload, SessionID: session.SessionID });
   const token = jwt.sign(payload, privateKey, {
     algorithm: "RS256",
     expiresIn: "1h",
-    keyid: "staples-kid",
+    keyid: "staples-kid", // Matches kid in JWKS
   });
   logger.info("StaplesJWT generated successfully", { SessionID: session.SessionID });
   return token;
@@ -129,273 +145,316 @@ async function refreshTokenThrice(refreshToken, correlationId) {
         qs.stringify({
           grant_type: "refresh_token",
           refresh_token: refreshToken,
-          client_id: config.idaasKeepMeLoggedInClientID,
-          client_secret: config.idaasKeepMeLoggedInClientSecret,
+          client_id: config.idaasKeepMeLoggedInClientID, // Assuming KMLI client for refresh, or use main client_id
+          client_secret: config.idaasKeepMeLoggedInClientSecret, // Same as above
         }),
         { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
       );
 
-      latestRefreshResponse = refreshResponse;
-      logger.info(`Attempt ${attempt}: Token refresh successful`, {correlationId, refreshResponse: refreshResponse.data});
+      latestRefreshResponse = refreshResponse; // Store the successful response
+      logger.info(`Attempt ${attempt}: Token refresh successful`, {correlationId, responseStatus: refreshResponse.status});
+      // Check if data actually contains tokens before breaking
+      if (refreshResponse.data && refreshResponse.data.access_token) {
+        break; // Success, no need for more attempts
+      } else {
+        logger.warn(`Attempt ${attempt}: Token refresh response did not contain access_token`, {correlationId, responseData: refreshResponse.data});
+        // Don't break if a retry might help, but typically IdP returns error or no token on failure.
+        // For now, if no access_token, it's effectively a failure for this attempt.
+        // If this was the last attempt, latestRefreshResponse will reflect this.
+      }
     } catch (refreshError) {
-      logger.warn(`Attempt ${attempt}: Token refresh failed`, {
+      logger.warn(`Attempt ${attempt}: Token refresh failed with HTTP error`, {
         correlationId,
-        error: refreshError
+        error: refreshError.response ? {status: refreshError.response.status, data: refreshError.response.data } : refreshError.message,
       });
-      break; // optional: break on first failure or allow retries
+      if (attempt === 3 || (refreshError.response && refreshError.response.status !== 500)) { // Don't retry client errors
+          break; // Break on error, especially if it's a client error or last attempt
+      }
+      // Optional: add a delay before retrying
+      // await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
     }
   }
-
-  return latestRefreshResponse;
+  return latestRefreshResponse; // This will be the last attempt's response or the first successful one
 }
 
-// Helper function to generate a random string for the code_verifier
 function generateRandomString(length) {
-  let text = "";
-  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-  for (let i = 0; i < length; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
+  return crypto.randomBytes(Math.ceil(length / 2)).toString("hex").slice(0, length); // More secure random
 }
 
-// Helper function to generate SHA256 hash and Base64URL encode it
 function sha256(buffer) {
   return crypto.createHash("sha256").update(buffer).digest();
 }
 
 function base64URLEncode(str) {
-  return str.toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
+  return str.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
-// Main function to generate PKCE challenge
 function generatePkceChallenge() {
-  const verifier = generateRandomString(128); // code_verifier: min 43, max 128 chars
-  const challenge = base64URLEncode(sha256(verifier)); // code_challenge
-  return {
-    code_verifier: verifier,
-    code_challenge: challenge,
-    code_challenge_method: "S256"
-  };
+  const verifier = generateRandomString(128);
+  const challenge = base64URLEncode(sha256(Buffer.from(verifier, 'utf8')));// Ensure buffer for sha256
+  return { code_verifier: verifier, code_challenge: challenge, code_challenge_method: "S256" };
 }
 
-app.post("/advice", async (req, res) => {
-  const { url, cookies = {}, ip, userAgent } = req.body;
+// Helper function to initiate redirect to IDP
+async function initiateIdpRedirect(req, res, targetUrlStr, deviceId, acrValue = null) {
   const correlationId = req.correlationId;
+  logger.info(`Initiating IDP redirect`, { correlationId, targetUrl: targetUrlStr, deviceId, acrValue });
 
-  logger.info("Entering /advice handler", {
-    correlationId,
-    rawBody: req.body
-  });
-
-  // 1) Compute device fingerprint
-  let deviceId;
-  try {
-    deviceId = computeDeviceFingerPrint({ ip, userAgent });
-    logger.debug("Computed device fingerprint", { correlationId, deviceId, ip, userAgent });
-  } catch (err) {
-    logger.error("Failed to compute device fingerprint", { correlationId, error: err.message });
-    return res.status(400).json({ error: "Invalid device context" });
-  }
-
-  // 2) Parse URL & extract sessionId from cookie
-  const ctxUrl = new URL(url);
-  logger.debug("Parsed request URL", { correlationId, url, pathname: ctxUrl.pathname, search: ctxUrl.search });
-
-  const sessionId = cookies["COOKIE_STAPLES_SESSION"];
-  logger.debug("Extracted sessionId from cookie", { correlationId, sessionId });
-
-  let session = sessionId ? sessionStore[sessionId] : null;
-  logger.debug("Loaded session from store", { correlationId, hasSession: !!session });
-
-  const isCallback = ctxUrl.pathname.endsWith("/callback") && ctxUrl.searchParams.has("code");
-  logger.info("Determined callback status", { correlationId, isCallback });
-
-  // ── CALLBACK FLOW ──
-  if (session && isCallback) {
-    logger.info("Entering CALLBACK flow", { correlationId, sessionId });
-
-    // 3) Fingerprint check
-    if (session.FingerPrint !== deviceId) {
-      logger.warn("Fingerprint mismatch in CALLBACK flow", {
-        correlationId,
-        expected: session.FingerPrint,
-        actual: deviceId
-      });
-      return res.status(401).json({ error: "Fingerprint mismatch" });
-    }
-    logger.debug("Fingerprint verified in CALLBACK flow", { correlationId });
-
-    // 4) Exchange code → tokens
-    const code = ctxUrl.searchParams.get("code");
-    const tokenReq = {
-      grant_type:    "authorization_code",
-      code,
-      client_id:     config.idaasClientID,
-      client_secret: config.idaasClientSecret,
-      redirect_uri:  config.appCallbackEndpoint,
-    };
-    logger.debug("Built token request payload", { correlationId, tokenReq: { ...tokenReq, client_secret: '***' } });
-
-    if (session.code_verifier) {
-      tokenReq.code_verifier = session.code_verifier;
-      logger.debug("Added PKCE code_verifier to token request", { correlationId, code_verifier: session.code_verifier });
-    }
-
-    try {
-      const { data } = await axios.post(
-        config.idaasAccessTokenEndpoint,
-        qs.stringify(tokenReq),
-        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-      );
-      logger.info("Received token response", {
-        correlationId,
-        tokens: { access_token: '***', id_token: '***', refresh_token: '***' }
-      });
-
-      // 5) Mutate the same session object
-      Object.assign(session, {
-        SessionID:      sessionId,
-        AccessToken:    data.access_token,
-        IdToken:        data.id_token,
-        RefreshToken:   data.refresh_token,
-        KeepMeLoggedIn: !!data.keep_me_logged_in
-      });
-      logger.debug("Updated session object after token exchange", { correlationId, session });
-
-      const staplesJwt = buildStaplesJWT(session);
-      logger.info("Built StaplesJWT and completing CALLBACK flow", { correlationId, SessionID: sessionId });
-
-      return res.json({
-        adviceHeaders: {
-          HTTP_STAPLES_JWT:          staplesJwt,
-          HTTP_STAPLES_COOKIE_VALUE: sessionId
-        }
-      });
-    } catch (err) {
-      logger.error("Token exchange failed in CALLBACK flow", {
-        correlationId,
-        error: err.response ? err.response.data : err.message
-      });
-      return res.status(500).json({ error: "Token exchange failed" });
-    }
-  }
-
-  // ── EXISTING-SESSION FLOW ──
-  if (session && !isCallback) {
-    logger.info("Entering EXISTING-SESSION flow", { correlationId, sessionId });
-    if (session.FingerPrint !== deviceId) {
-      logger.warn("Fingerprint mismatch in EXISTING-SESSION flow; invalidating session", {
-        correlationId,
-        expected: session.FingerPrint,
-        actual: deviceId
-      });
-      delete sessionStore[sessionId];
-      session = null;
-    } else {
-      logger.debug("Fingerprint verified in EXISTING-SESSION flow", { correlationId });
-    }
-  }
-
-  // 6) If session valid & access token still good → re-issue JWT
-  if (session && session.AccessToken && !isAccessTokenExpired(session)) {
-    logger.info("Existing session is valid; issuing JWT", { correlationId, sessionId });
-    const staplesJwt = buildStaplesJWT(session);
-    return res.json({
-      adviceHeaders: {
-        HTTP_STAPLES_JWT:          staplesJwt,
-        HTTP_STAPLES_COOKIE_VALUE: sessionId
-      }
-    });
-  }
-
-  // 7) If expired but refreshable → attempt refresh
-  if (session && isAccessTokenExpired(session) && isRefreshTokenValid(session)) {
-    logger.info("Access token expired; attempting refresh", { correlationId, sessionId });
-    try {
-      const refreshRes = await refreshTokenThrice(session.RefreshToken, correlationId);
-      if (refreshRes?.data) {
-        logger.info("Refresh token call succeeded", { correlationId });
-        Object.assign(session, {
-          AccessToken:  refreshRes.data.access_token,
-          IdToken:      refreshRes.data.id_token,
-          RefreshToken: refreshRes.data.refresh_token || session.RefreshToken
-        });
-        logger.debug("Updated session after refresh", { correlationId, session });
-
-        const staplesJwt = buildStaplesJWT(session);
-        return res.json({
-          adviceHeaders: {
-            HTTP_STAPLES_JWT:          staplesJwt,
-            HTTP_STAPLES_COOKIE_VALUE: sessionId
-          }
-        });
-      }
-    } catch (err) {
-      logger.error("Token refresh failed", { correlationId, error: err.message });
-    }
-
-    logger.warn("Failed to refresh token; invalidating session", { correlationId, sessionId });
-    delete sessionStore[sessionId];
-    session = null;
-  }
-
-  // ── NEW-LOGIN FLOW (PKCE ALWAYS) ──
-  logger.info("Entering NEW-LOGIN flow with PKCE", { correlationId });
-
-  // a) Generate new sessionId & nonces
   const newSessionId = uuidv4();
   const stateId      = uuidv4();
-  const nonceId      = uuidv4();
-  const preAuth      = {
+  const nonceId      = uuidv4(); // OIDC Nonce
+
+  const preAuthSession = {
     StateID:     stateId,
     NonceID:     nonceId,
     FingerPrint: deviceId,
-    TargetUrl:   url
+    TargetUrl:   targetUrlStr, // The original URL the user intended to access
   };
-  logger.debug("Created pre-auth session object", { correlationId, newSessionId, preAuth });
 
-  // b) Generate PKCE challenge/verifier
   const pkce = generatePkceChallenge();
-  preAuth.code_verifier = pkce.code_verifier;
-  logger.debug("Generated PKCE challenge", { correlationId, pkce });
+  preAuthSession.code_verifier = pkce.code_verifier; // Store verifier for callback
+  logger.debug("Created pre-auth session object with PKCE", { correlationId, newSessionId, preAuthSession });
 
-  // c) Build authorize URL with PKCE parameters
   const txnId = 'app-txn-' + uuidv4();
   const params = new URLSearchParams({
     client_id:             config.idaasClientID,
     redirect_uri:          config.appCallbackEndpoint,
     scope:                 config.scope,
-    response_type:         config.response_type,
+    response_type:         config.response_type, // e.g., "code"
     state:                 stateId,
     nonce:                 nonceId,
     txn_id:                txnId,
     code_challenge:        pkce.code_challenge,
     code_challenge_method: pkce.code_challenge_method
   });
-  const authnUrl = `${config.idaasAuthorizeEndpoint}?${params}`;
-  logger.debug("Constructed authnUrl with PKCE", { correlationId, authnUrl });
 
-  // d) Persist the preAuth session under newSessionId
-  sessionStore[newSessionId] = preAuth;
+  if (acrValue) {
+    params.append('acr_values', acrValue);
+    params.append('prompt', 'login');
+    params.append('service', 'ChangeUsername');
+    
+  }
+
+  const authnUrl = `${config.idaasAuthorizeEndpoint}?${params.toString()}`;
+  logger.debug("Constructed authnUrl", { correlationId, authnUrl });
+
+  sessionStore[newSessionId] = preAuthSession;
   logger.info("Saved new pre-auth session to store", { correlationId, newSessionId });
 
-  // e) Return the redirect URL + only the sessionId cookie
   return res.json({
     adviceHeaders: {
       HTTP_STAPLES_AUTHN_URL:    authnUrl,
-      HTTP_STAPLES_COOKIE_VALUE: newSessionId
+      HTTP_STAPLES_COOKIE_VALUE: newSessionId // Proxy should set this cookie
     }
   });
+}
+
+
+app.post("/advice", async (req, res) => {
+  const { url: targetUrlStr, cookies = {}, ip, userAgent } = req.body;
+  const correlationId = req.correlationId;
+
+  logger.info("Entering /advice handler", { correlationId, rawBody: { url: targetUrlStr, cookies: Object.keys(cookies), ip, userAgent } });
+
+  let deviceId;
+  try {
+    deviceId = computeDeviceFingerPrint({ ip, userAgent });
+  } catch (err) {
+    logger.error("Failed to compute device fingerprint", { correlationId, error: err.message, ip, userAgent });
+    return res.status(400).json({ error: "Invalid device context: " + err.message });
+  }
+
+  let targetUrlObject;
+  try {
+    targetUrlObject = new URL(targetUrlStr);
+  } catch (e) {
+    logger.error("Invalid target URL provided", { correlationId, url: targetUrlStr, error: e.message });
+    return res.status(400).json({ error: "Invalid target URL" });
+  }
+  logger.debug("Parsed target URL", { correlationId, url: targetUrlStr, pathname: targetUrlObject.pathname });
+
+  const sessionId = cookies["COOKIE_STAPLES_SESSION"];
+  let session = sessionId ? sessionStore[sessionId] : null;
+  logger.debug("Session status", { correlationId, sessionId, sessionFound: !!session });
+
+  const isCallback = targetUrlObject.pathname.endsWith("/callback") && targetUrlObject.searchParams.has("code");
+  const isChangeUsernameRequest = targetUrlObject.pathname.endsWith("/change-username");
+
+  logger.info("Request context", { correlationId, isCallback, isChangeUsernameRequest, targetPath: targetUrlObject.pathname });
+
+  // ── 1. CALLBACK FLOW ──
+  if (isCallback) {
+    if (!session) {
+      logger.error("Callback received but no session found for sessionId. Cannot process PKCE.", { correlationId, sessionIdFromCookie: sessionId });
+      // Potentially redirect to login again or show an error page.
+      // For now, let's force a new login by falling through after clearing any invalid session id.
+      // Or, more directly, initiate a new login.
+      return initiateIdpRedirect(req, res, config.defaultRedirectUrl || "/", deviceId, null); // Redirect to a safe default
+    }
+    logger.info("Entering CALLBACK flow", { correlationId, sessionId });
+
+    if (session.FingerPrint !== deviceId) {
+      logger.warn("Fingerprint mismatch in CALLBACK flow. Invalidating session.", {
+        correlationId, sessionId, expected: session.FingerPrint, actual: deviceId
+      });
+      delete sessionStore[sessionId];
+      return initiateIdpRedirect(req, res, config.defaultRedirectUrl || "/", deviceId, null); // Force new login
+    }
+
+    const code = targetUrlObject.searchParams.get("code");
+    const returnedState = targetUrlObject.searchParams.get("state");
+
+    if (!session.StateID || session.StateID !== returnedState) {
+      logger.error("State mismatch in CALLBACK flow. Potential CSRF. Invalidating session.", {
+        correlationId, sessionId, expected: session.StateID, actual: returnedState
+      });
+      delete sessionStore[sessionId];
+      return initiateIdpRedirect(req, res, config.defaultRedirectUrl || "/", deviceId, null); // Force new login
+    }
+    logger.debug("State verified in CALLBACK flow", { correlationId, sessionId });
+
+    const tokenReqPayload = {
+      grant_type: "authorization_code",
+      code: code,
+      redirect_uri: config.appCallbackEndpoint, // Must match what was sent in authz request
+      client_id: config.idaasClientID,
+      client_secret: config.idaasClientSecret,
+    };
+    if (session.code_verifier) {
+      tokenReqPayload.code_verifier = session.code_verifier;
+    } else {
+      logger.warn("Missing code_verifier in session for PKCE token exchange", { correlationId, sessionId });
+      // This likely indicates a problem or a non-PKCE flow somehow reaching here with a session.
+    }
+
+    try {
+      logger.debug("Exchanging code for tokens", { correlationId, sessionId, client_id: tokenReqPayload.client_id });
+      const tokenResponse = await axios.post(
+        config.idaasAccessTokenEndpoint,
+        qs.stringify(tokenReqPayload),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+      const tokenData = tokenResponse.data;
+      logger.info("Successfully exchanged code for tokens", { correlationId, sessionId });
+
+      // OIDC: Validate ID token signature, issuer, audience, nonce, expiry.
+      // For now, assuming tokenData.id_token is valid if present.
+      // The Nonce in ID token should match session.NonceID.
+
+      const finalSession = {
+        SessionID:      sessionId, // Keep SessionID for reference if needed by buildStaplesJWT
+        AccessToken:    tokenData.access_token,
+        IdToken:        tokenData.id_token,
+        RefreshToken:   tokenData.refresh_token,
+        KeepMeLoggedIn: !!tokenData.keep_me_logged_in, // Or however KMLI is indicated
+        FingerPrint:    session.FingerPrint, // Preserve fingerprint
+        TargetUrl:      session.TargetUrl,   // Preserve original target URL
+        // UserInfo: could be fetched here using access_token if needed
+      };
+      sessionStore[sessionId] = finalSession; // Update session in store
+      logger.debug("Session updated with tokens", { correlationId, sessionId });
+
+      const staplesJwt = buildStaplesJWT(finalSession);
+      logger.info("StaplesJWT created, callback flow complete.", { correlationId, sessionId });
+      return res.json({
+        adviceHeaders: {
+          HTTP_STAPLES_JWT: staplesJwt,
+          HTTP_STAPLES_COOKIE_VALUE: sessionId,
+          // Optionally, instruct proxy to redirect to finalSession.TargetUrl
+          // HTTP_STAPLES_REDIRECT_TARGET: finalSession.TargetUrl
+        }
+      });
+    } catch (err) {
+      logger.error("Token exchange failed in CALLBACK flow", {
+        correlationId, sessionId,
+        error: err.response ? { status: err.response.status, data: err.response.data } : err.message
+      });
+      delete sessionStore[sessionId]; // Clean up session on failure
+      return initiateIdpRedirect(req, res, config.defaultRedirectUrl || "/", deviceId, null); // Force new login on error
+    }
+  } // End CALLBACK flow
+
+  // ── 2. CHANGE USERNAME REQUEST FLOW ──
+  if (isChangeUsernameRequest) {
+    logger.info("Entering CHANGE-USERNAME flow (redirect to IdP with acr_values)", { correlationId, targetUrl: targetUrlStr });
+    // This always initiates a fresh login sequence with specific acr_values.
+    // targetUrlStr is the /change-username URL itself.
+    return initiateIdpRedirect(req, res, targetUrlStr, deviceId, 'Staples_ChangeUsername');
+  }
+
+  // ── 3. EXISTING-SESSION PROCESSING (Not a callback, not a change-username initiation) ──
+  if (session) {
+    logger.info("Processing existing session", { correlationId, sessionId });
+    if (session.FingerPrint !== deviceId) {
+      logger.warn("Fingerprint mismatch for existing session; invalidating.", {
+        correlationId, sessionId, expected: session.FingerPrint, actual: deviceId
+      });
+      delete sessionStore[sessionId];
+      session = null; // Fall through to new login
+    } else {
+      logger.debug("Fingerprint verified for existing session", { correlationId, sessionId });
+      if (session.AccessToken && !isAccessTokenExpired(session)) {
+        logger.info("Access token valid for existing session; issuing StaplesJWT.", { correlationId, sessionId });
+        const staplesJwt = buildStaplesJWT(session);
+        return res.json({
+          adviceHeaders: {
+            HTTP_STAPLES_JWT: staplesJwt,
+            HTTP_STAPLES_COOKIE_VALUE: sessionId
+          }
+        });
+      }
+
+      logger.info("Access token expired or missing for existing session.", { correlationId, sessionId });
+      if (isRefreshTokenValid(session)) {
+        logger.info("Attempting token refresh for existing session.", { correlationId, sessionId });
+        try {
+          const refreshRes = await refreshTokenThrice(session.RefreshToken, correlationId);
+          if (refreshRes && refreshRes.data && refreshRes.data.access_token) {
+            logger.info("Token refresh successful.", { correlationId, sessionId });
+            session.AccessToken = refreshRes.data.access_token;
+            if (refreshRes.data.id_token) session.IdToken = refreshRes.data.id_token;
+            if (refreshRes.data.refresh_token) session.RefreshToken = refreshRes.data.refresh_token; // Handle refresh token rotation
+            sessionStore[sessionId] = session; // Persist updated session
+
+            const staplesJwt = buildStaplesJWT(session);
+            return res.json({
+              adviceHeaders: {
+                HTTP_STAPLES_JWT: staplesJwt,
+                HTTP_STAPLES_COOKIE_VALUE: sessionId
+              }
+            });
+          } else {
+            logger.warn("Token refresh attempt did not yield a new access token.", { correlationId, sessionId, responseStatus: refreshRes ? refreshRes.status : 'N/A'});
+          }
+        } catch (err) {
+          logger.error("Token refresh attempt failed with an error.", { correlationId, sessionId, error: err.message });
+        }
+      } else {
+        logger.warn("Refresh token invalid or missing; cannot refresh.", { correlationId, sessionId });
+      }
+
+      // If refresh failed or not possible, invalidate session
+      logger.warn("Invalidating session due to failed/impossible refresh or expired token.", { correlationId, sessionId });
+      delete sessionStore[sessionId];
+      session = null; // Fall through to new login
+    }
+  } // End existing session processing
+
+  // ── 4. NEW-LOGIN FLOW (Default) ──
+  // Reached if no session, session invalidated, or unhandled case.
+  logger.info("Entering NEW-LOGIN flow (redirect to IdP).", { correlationId, reason: session === null ? "No valid session" : "Unhandled existing session state" });
+  // targetUrlStr is the original URL the user was trying to access.
+  return initiateIdpRedirect(req, res, targetUrlStr, deviceId, null); // Standard login, no specific acr_value
 });
 
-
-// ... (app.listen and any other remaining code) ...
-
-// Start Auth service with detailed startup logging
+// Start Auth service
 app.listen(config.port, "0.0.0.0", () => {
-  logger.info(`Auth service listening on port ${config.port}`);
+  logger.info(`Auth service listening on port ${config.port}.`);
+  logger.debug("Configuration in use (sensitive values might be masked or omitted from log in production):", {
+      idaasAccessTokenEndpoint: config.idaasAccessTokenEndpoint,
+      idaasAuthorizeEndpoint: config.idaasAuthorizeEndpoint,
+      appCallbackEndpoint: config.appCallbackEndpoint,
+      scope: config.scope,
+      // Avoid logging client secrets directly here
+  });
 });
