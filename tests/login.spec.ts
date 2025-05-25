@@ -186,6 +186,62 @@ function generatePkceChallenge(): PkceCodes {
   };
 }
 
+async function introspectToken(
+  introspectionEndpoint: string,
+  token: string,
+  clientId: string,
+  clientSecret: string,
+  label: string = 'Token'
+) {
+  if (!introspectionEndpoint) {
+    console.warn(`[Introspection] Introspection endpoint not configured. Skipping for ${label}.`);
+    return null;
+  }
+  if (!token) {
+    console.warn(`[Introspection] No token provided for ${label}. Skipping introspection.`);
+    return null;
+  }
+  console.log(`\n🧐 Introspecting ${label} at ${introspectionEndpoint}`);
+  try {
+    const payload = {
+      token: token,
+      client_id: clientId,
+      //client_secret: clientSecret, // Introspection often requires client auth
+      token_type_hint: 'access_token', // Optional, but good practice
+    };
+    const res = await axios.post(introspectionEndpoint, qs.stringify(payload), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    console.log(`🔬 [Introspection] Raw result for ${label}:`, res.data);
+    return res.data;
+  } catch (error: any) {
+    console.error(`🔥 [Introspection] Error introspecting ${label}:`, error.response?.data || error.message);
+    return null;
+  }
+}
+
+async function fetchUserInfo(userInfoEndpoint: string, accessToken: string, label: string = 'User') {
+  if (!userInfoEndpoint) {
+    console.warn(`[UserInfo] UserInfo endpoint not configured. Skipping for ${label}.`);
+    return null;
+  }
+  if (!accessToken) {
+    console.warn(`[UserInfo] No access token provided for ${label}. Skipping UserInfo fetch.`);
+    return null;
+  }
+  console.log(`\n🧑 Fetching UserInfo for ${label} from ${userInfoEndpoint}`);
+  try {
+    const res = await axios.get(userInfoEndpoint, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    console.log(`ℹ️ [UserInfo] Raw result for ${label}:`, res.data);
+    return res.data;
+  } catch (error: any) {
+    console.error(`🔥 [UserInfo] Error fetching UserInfo for ${label}:`, error.response?.data || error.message);
+    return null;
+  }
+}
+
 // Build the authorization URL (standard only now), returns PKCE verifier
 async function buildAuthUrl(
   authEndpoint: string,
@@ -234,7 +290,7 @@ async function loginAndCaptureCode(
     if (url.includes('/authenticate')) {
       const header = response.headers()['x-forgerock-transactionid'];
       if (header) {
-        console.log(`🆔 Captured x-forgerock-transactionid: ${header} from ${url}`);
+        console.log(`🆔 Captured x-forgerock-transactionid: ${header}`);
         capturedTransactionIds.push(header);
       }
     }
@@ -315,19 +371,6 @@ async function exchangeAuthCode(tokenEndpoint: string, code: string, codeVerifie
   return res.data;
 }
 
-// Short-lived token exchange (e.g. for keep-me-logged-in)
-async function exchangeToken(tokenEndpoint: string, data: Record<string, any>) {
-  // This function is not directly affected by the PKCE change for authorization_code grant
-  // but it uses client_secret from config.clients.keepMeLoggedIn if it's used for client credentials or similar.
-  // If this function were to be used for a client that should also adhere to "no client_secret",
-  // it would need adjustment based on the specific grant_type.
-  const res = await axios.post(tokenEndpoint, qs.stringify(data), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  });
-  console.log(`🔄 Exchange response: ${JSON.stringify(res.data)}`);
-  return res.data;
-}
-
 function decodeJwt(token: string, label: string) {
   if (!token) {
     console.warn(`[JWT] Token for ${label} is undefined or empty. Skipping decoding.`);
@@ -386,7 +429,10 @@ for (const tc of testCases) {
 
     const openid = await fetchOpenIDConfig();
     const tokenUrl = openid.token_endpoint;
+    const userinfoUrl = openid.userinfo_endpoint;
+    const introspectionUrl = openid.introspection_endpoint;
 
+    let seedTokens; // Reset seed tokens for each test
     // If Change-Username, first do a standard login so ACR will see an existing session
     if (tc.acrValue === 'Staples_ChangeUsername') {
       console.log('🔏 Seeding session with standard login');
@@ -396,7 +442,20 @@ for (const tc of testCases) {
       // Exchange the seed code to complete the login, even though we don't use the tokens directly
       // This ensures the session is fully established.
       if (seedAuthCode) {
-        await exchangeAuthCode(tokenUrl, seedAuthCode, seedCodeVerifier); // No '!' needed
+        seedTokens = await exchangeAuthCode(tokenUrl, seedAuthCode, seedCodeVerifier); // No '!' needed
+        if (seedTokens && seedTokens.access_token) {
+            decodeJwt(seedTokens.access_token, 'Seed Access Token');
+            decodeJwt(seedTokens.id_token, 'Seed ID Token');
+            await introspectToken(
+                introspectionUrl,
+                seedTokens.access_token,
+                config.clients.regular.clientId,
+                config.clients.regular.clientSecret, // Using regular client's secret for its tokens
+                'Seed Access Token'
+            );
+            console.log('Seed User Access Token:', seedTokens.access_token);
+            await fetchUserInfo(userinfoUrl, seedTokens.access_token, 'Seed User');
+        }        
       }
     }
 
@@ -412,6 +471,24 @@ for (const tc of testCases) {
     expect(tokens.access_token).toBeTruthy();
     expect(tokens.id_token).toBeTruthy();
     if (!tc.acrValue) expect(tokens.refresh_token).toBeTruthy();
+
+    if (tokens && tokens.access_token) {
+        await introspectToken(
+            introspectionUrl,
+            tokens.access_token,
+            config.clients.regular.clientId,
+            config.clients.regular.clientSecret, // Using regular client's secret for its tokens
+            'Main Access Token'
+        );
+
+        console.log('Main User Access Token:', tokens.access_token);
+        await fetchUserInfo(userinfoUrl, tokens.access_token, 'Main User');
+
+        if (seedTokens && seedTokens.access_token) {
+          console.log('Seed User Access Token:', seedTokens.access_token);
+          await fetchUserInfo(userinfoUrl, seedTokens.access_token, 'Seed User');
+        }
+    }    
 
     // Verify the username change succeeded
     if (tc.acrValue === 'Staples_ChangeUsername') {
