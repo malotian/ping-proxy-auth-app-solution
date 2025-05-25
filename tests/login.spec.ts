@@ -456,19 +456,31 @@ for (const tc of testCases) {
     const userinfoUrl = openid.userinfo_endpoint;
     const introspectionUrl = openid.introspection_endpoint;
 
-    let seedTokens; // Reset seed tokens for each test
+    let seedTokens: any; // Reset seed tokens for each test
+    let seedIdTokenPayload: any;
+    let seedAccessTokenPayload: any;
+    let seedSubFromToken: string | undefined;
+
     // If Change-Username, first do a standard login so ACR will see an existing session
     if (tc.acrValue === 'Staples_ChangeUsername') {
       console.log('🔏 Seeding session with standard login');
-      const standardTc: TestCase = { ...tc, acrValue: undefined };
+      const standardTc: TestCase = { ...tc, acrValue: undefined, newUsername: undefined, newEmail: undefined }; // Ensure newUsername/newEmail are not used for seed
       const { authUrl: loginUrl, codeVerifier: seedCodeVerifier } = await buildAuthUrl(openid.authorization_endpoint, standardTc);
       const { authCode: seedAuthCode } = await loginAndCaptureCode(page, loginUrl, standardTc);
 
       if (seedAuthCode) {
         seedTokens = await exchangeAuthCode(tokenUrl, seedAuthCode, seedCodeVerifier); // Pass optional seedCodeVerifier
+        expect(seedTokens).toBeTruthy();
+        expect(seedTokens.access_token).toBeTruthy();
+        expect(seedTokens.id_token).toBeTruthy();
+
         if (seedTokens && seedTokens.access_token) {
-          decodeJwt(seedTokens.access_token, 'Seed Access Token');
-          decodeJwt(seedTokens.id_token, 'Seed ID Token');
+          seedAccessTokenPayload = decodeJwt(seedTokens.access_token, 'Seed Access Token');
+          seedIdTokenPayload = decodeJwt(seedTokens.id_token, 'Seed ID Token');
+          expect(seedAccessTokenPayload).toBeTruthy();
+          expect(seedIdTokenPayload).toBeTruthy();
+          seedSubFromToken = seedAccessTokenPayload.sub;
+
 
           const seedIdTokenIntro = await introspectToken(
             introspectionUrl,
@@ -476,10 +488,10 @@ for (const tc of testCases) {
             config.clients.regular.clientId,
             config.clients.regular.clientSecret, // Using regular client's secret for its tokens
             "id_token"
-            // 'Seed ID Token' // Label removed
           );
           if (seedIdTokenIntro) {
             console.log(`🔬 [Introspection] Raw result for Seed ID Token:`, seedIdTokenIntro);
+            expect(seedIdTokenIntro.active).toBe(false); // ID Tokens often show as inactive on introspection
           }
 
 
@@ -489,16 +501,25 @@ for (const tc of testCases) {
             config.clients.regular.clientId,
             config.clients.regular.clientSecret, // Using regular client's secret for its tokens
             "access_token"
-            // 'Seed Access Token' // Label removed
           );
           if (seedAccessTokenIntro) {
             console.log(`🔬 [Introspection] Raw result for Seed Access Token:`, seedAccessTokenIntro);
+            expect(seedAccessTokenIntro.active).toBe(true);
+            expect(seedAccessTokenIntro.client_id).toBe(config.clients.regular.clientId);
+            expect(seedAccessTokenIntro.sub).toBe(seedSubFromToken);
+            expect(seedAccessTokenIntro.username).toBe(seedSubFromToken); // Or user_id, depending on IdP
+            expect(seedAccessTokenIntro.exp).toBeGreaterThan(Date.now() / 1000);
           }
 
           console.log('Seed User Access Token:', seedTokens.access_token);
-          const seedUserInfo = await fetchUserInfo(userinfoUrl, seedTokens.access_token /*, 'Seed User' */); // Label removed
+          const seedUserInfo = await fetchUserInfo(userinfoUrl, seedTokens.access_token);
           if (seedUserInfo) {
             console.log(`ℹ️ [UserInfo] Raw result for Seed User:`, seedUserInfo);
+            expect(seedUserInfo.sub).toBe(seedSubFromToken);
+            expect(seedUserInfo.email).toBe(standardTc.identifier); // Assuming identifier is email for this test case
+            if (seedIdTokenPayload) { // Username in UserInfo should match what was in the ID token from seed
+                expect(seedUserInfo.user_name).toBe(seedIdTokenPayload.user_name);
+            }
           }
         }
       }
@@ -512,10 +533,17 @@ for (const tc of testCases) {
     // Exchange for tokens & assertions
     const tokens = await exchangeAuthCode(tokenUrl, authCode, codeVerifier); // Pass optional codeVerifier
     decodeJwt(tokens.access_token, 'Access Token');
-    decodeJwt(tokens.id_token, 'ID Token');
+    const mainIdTokenDecoded = decodeJwt(tokens.id_token, 'ID Token');
+    const mainAccessTokenDecoded = decodeJwt(tokens.access_token, 'Access Token');
     expect(tokens.access_token).toBeTruthy();
     expect(tokens.id_token).toBeTruthy();
-    if (!tc.acrValue) expect(tokens.refresh_token).toBeTruthy();
+    if (!tc.acrValue) expect(tokens.refresh_token).toBeTruthy(); // Refresh token might not be issued for ACR flows depending on config
+    else expect(tokens.refresh_token).toBeTruthy(); // Based on log, refresh token IS present for ACR
+
+    expect(mainIdTokenDecoded).toBeTruthy();
+    expect(mainAccessTokenDecoded).toBeTruthy();
+    const mainSubFromToken = mainAccessTokenDecoded.sub;
+
 
     if (tokens && tokens.id_token) {
       const mainIdTokenIntro = await introspectToken(
@@ -524,10 +552,10 @@ for (const tc of testCases) {
         config.clients.regular.clientId,
         config.clients.regular.clientSecret, // Using regular client's secret for its tokens
         "id_token"
-        // 'Main ID Token' // Label removed
       );
       if (mainIdTokenIntro) {
         console.log(`🔬 [Introspection] Raw result for Main ID Token:`, mainIdTokenIntro);
+        expect(mainIdTokenIntro.active).toBe(false);
       }
     }
 
@@ -538,32 +566,50 @@ for (const tc of testCases) {
         config.clients.regular.clientId,
         config.clients.regular.clientSecret, // Using regular client's secret for its tokens
         "access_token"
-        // 'Main Access Token' // Label removed
       );
       if (mainAccessTokenIntro) {
         console.log(`🔬 [Introspection] Raw result for Main Access Token:`, mainAccessTokenIntro);
+        expect(mainAccessTokenIntro.active).toBe(true);
+        expect(mainAccessTokenIntro.client_id).toBe(config.clients.regular.clientId);
+        if (tc.acrValue === 'Staples_ChangeUsername' && seedSubFromToken) {
+             expect(mainAccessTokenIntro.sub).toBe(seedSubFromToken); // Subject should be consistent for the same user
+             expect(mainAccessTokenIntro.username).toBe(seedSubFromToken);
+        } else {
+            expect(mainAccessTokenIntro.sub).toBeDefined();
+            expect(mainAccessTokenIntro.username).toBeDefined();
+        }
+        expect(mainAccessTokenIntro.exp).toBeGreaterThan(Date.now() / 1000);
       }
 
       console.log('Main User Access Token:', tokens.access_token);
-      const mainUserInfo = await fetchUserInfo(userinfoUrl, tokens.access_token /*, 'Main User' */); // Label removed
+      const mainUserInfo = await fetchUserInfo(userinfoUrl, tokens.access_token);
       if (mainUserInfo) {
         console.log(`ℹ️ [UserInfo] Raw result for Main User:`, mainUserInfo);
+        if (tc.acrValue === 'Staples_ChangeUsername' && seedSubFromToken) {
+            expect(mainUserInfo.sub).toBe(seedSubFromToken);
+        } else {
+            expect(mainUserInfo.sub).toBeDefined();
+        }
+        expect(mainUserInfo.email).toBe(tc.identifier); // Or tc.newEmail if email is also changed and expected
+        if (tc.acrValue === 'Staples_ChangeUsername') {
+            expect(mainUserInfo.user_name).toBe(tc.newUsername);
+        } else if (mainIdTokenDecoded) {
+            expect(mainUserInfo.user_name).toBe(mainIdTokenDecoded.user_name);
+        }
       }
     }
 
-    // This block seems redundant as it re-introspects and re-fetches seed user info.
-    // However, I will keep it as per "don't change comments or anything else" and to match the original structure.
-    // If it was intended to re-validate after the main flow, the state might have changed (e.g. if tokens were revoked).
+    // Re-check seed tokens if they exist
     if (seedTokens && seedTokens.id_token) {
       const seedIdTokenIntroAgain = await introspectToken(introspectionUrl,
         seedTokens.id_token,
         config.clients.regular.clientId,
         config.clients.regular.clientSecret, // Using regular client's secret for its tokens
         "id_token"
-        // 'Seed ID Token' // Label removed
       );
       if (seedIdTokenIntroAgain) {
         console.log(`🔬 [Introspection] Raw result for Seed ID Token (re-check):`, seedIdTokenIntroAgain);
+        expect(seedIdTokenIntroAgain.active).toBe(false);
       }
     }
 
@@ -574,23 +620,37 @@ for (const tc of testCases) {
         config.clients.regular.clientId,
         config.clients.regular.clientSecret, // Using regular client's secret for its tokens
         "access_token"
-        // 'Seed Access Token' // Label removed
       );
       if (seedAccessTokenIntroAgain) {
         console.log(`🔬 [Introspection] Raw result for Seed Access Token (re-check):`, seedAccessTokenIntroAgain);
+        expect(seedAccessTokenIntroAgain.active).toBe(true); // Seed access token should still be active
+        expect(seedAccessTokenIntroAgain.client_id).toBe(config.clients.regular.clientId);
+        expect(seedAccessTokenIntroAgain.sub).toBe(seedSubFromToken);
+        expect(seedAccessTokenIntroAgain.exp).toBeGreaterThan(Date.now() / 1000);
       }
 
       console.log('Seed User Access Token:', seedTokens.access_token);
-      const seedUserInfoAgain = await fetchUserInfo(userinfoUrl, seedTokens.access_token /*, 'Seed User' */); // Label removed
+      const seedUserInfoAgain = await fetchUserInfo(userinfoUrl, seedTokens.access_token);
       if (seedUserInfoAgain) {
         console.log(`ℹ️ [UserInfo] Raw result for Seed User (re-check):`, seedUserInfoAgain);
+        expect(seedUserInfoAgain.sub).toBe(seedSubFromToken);
+        expect(seedUserInfoAgain.email).toBe(tc.identifier); // Original identifier
+        // UserInfo reflects the *current* state, so it should show the *new* username
+        if (tc.acrValue === 'Staples_ChangeUsername') {
+            expect(seedUserInfoAgain.user_name).toBe(tc.newUsername);
+        } else if (seedIdTokenPayload) { // Fallback to original seed username if not a change username flow
+            expect(seedUserInfoAgain.user_name).toBe(seedIdTokenPayload.user_name);
+        }
       }
     }
 
     // Verify the username change succeeded
     if (tc.acrValue === 'Staples_ChangeUsername') {
-      const idPayload = JSON.parse(Buffer.from(tokens.id_token.split('.')[1], 'base64').toString('utf8'));
-      expect(idPayload.user_name).toBe(tc.newUsername);
+      expect(mainIdTokenDecoded).toBeTruthy();
+      expect(mainIdTokenDecoded.user_name).toBe(tc.newUsername); // Already asserted by the script
+      if (mainIdTokenDecoded) { // Redundant check as already asserted by script
+          expect(mainIdTokenDecoded.acr).toBe('Staples_ChangeUsername');
+      }
       console.log(`🏅 user_name was updated to ${tc.newUsername}`);
     }
 
