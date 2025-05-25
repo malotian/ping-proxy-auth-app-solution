@@ -13,8 +13,8 @@ const config = {
   ping: {
     baseUrl: 'https://identity-qe.staples.com',
     realm: 'alpha',
-    usePAR: false, // Toggle pushed-auth vs standard
-    parEndpoint: 'https://identity-qe.staples.com/am/oauth2/realms/root/realms/alpha/par',
+    // usePAR: false, // REMOVED
+    // parEndpoint: 'https://identity-qe.staples.com/am/oauth2/realms/root/realms/alpha/par', // REMOVED
   },
   clients: {
     regular: {
@@ -186,59 +186,18 @@ function generatePkceChallenge(): PkceCodes {
   };
 }
 
-// Build the authorization URL (PAR or standard), returns any PKCE verifier
+// Build the authorization URL (standard only now), returns PKCE verifier
 async function buildAuthUrl(
   authEndpoint: string,
   tc: TestCase
-): Promise<{ authUrl: string; codeVerifier?: string }> {
+): Promise<{ authUrl: string; codeVerifier: string }> { // codeVerifier is now non-optional
   console.log(`\n🔐 Building auth URL (ACR=${tc.acrValue ?? 'none'})`);
   const state = crypto.randomBytes(16).toString('hex');
   const nonce = crypto.randomBytes(16).toString('hex');
-  let codeVerifierToReturn: string|undefined;
-  const pkce = generatePkceChallenge(); // PKCE is always generated now
-  codeVerifierToReturn = pkce.code_verifier;
+  const pkce = generatePkceChallenge(); // PKCE is always generated
+  const codeVerifierToReturn = pkce.code_verifier;
 
-  // 1) Pushed Auth Request path
-  if (config.ping.usePAR && config.ping.parEndpoint) {
-    console.log('    🚀 Using PAR + PKCE');
-    // PKCE was generated above
-    
-    const parPayload: Record<string, any> = {
-      client_id: config.clients.regular.clientId,
-      // client_secret: config.clients.regular.clientSecret, // REMOVED: Relying on PKCE, client makes unauthenticated PAR
-      response_type: 'code',
-      scope: 'openid profile email write',
-      redirect_uri: config.redirectUri,
-      code_challenge: pkce.code_challenge,
-      code_challenge_method: pkce.code_challenge_method,
-    };
-    if (tc.acrValue) parPayload.acr_values = tc.acrValue;
-
-    console.log(`    ➡️  POST to PAR endpoint: ${config.ping.parEndpoint}`);
-    const parRes = await axios.post(
-      config.ping.parEndpoint,
-      qs.stringify(parPayload),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
-    const { request_uri } = parRes.data;
-    if (!request_uri) throw new Error('Missing request_uri in PAR response');
-
-    const authParams: Record<string, any> = {
-      client_id: config.clients.regular.clientId,
-      request_uri,
-    };
-    if (!tc.acrValue) {
-      if (tc.jumpUrl) authParams.jumpUrl = tc.jumpUrl;
-      if (tc.showGuest) authParams.showGuest = tc.showGuest;
-    }
-    const url = `${authEndpoint}?${qs.stringify(authParams)}`;
-    console.log(`    🌍 PAR auth URL: ${url}`);
-    return { authUrl: url, codeVerifier: codeVerifierToReturn };
-  }
-
-  // 2) Standard authorization URL
-  console.log('    🛡️ Using standard auth URL + PKCE');
-  // PKCE was generated above
+  console.log('    🛡️ Building standard auth URL with PKCE');
   const params: Record<string, any> = {
     client_id: config.clients.regular.clientId,
     redirect_uri: config.redirectUri,
@@ -246,8 +205,8 @@ async function buildAuthUrl(
     scope: 'openid profile email write',
     state,
     nonce,
-    code_challenge: pkce.code_challenge, // ADDED for standard flow
-    code_challenge_method: pkce.code_challenge_method, // ADDED for standard flow
+    code_challenge: pkce.code_challenge,
+    code_challenge_method: pkce.code_challenge_method,
   };
   if (!tc.acrValue) {
     params.showGuest = tc.showGuest;
@@ -338,7 +297,7 @@ async function loginAndCaptureCode(
   });
 }
 
-async function exchangeAuthCode(tokenEndpoint: string, code: string, codeVerifier?: string) {
+async function exchangeAuthCode(tokenEndpoint: string, code: string, codeVerifier: string) { // codeVerifier is now non-optional
   console.log(`\n🔁 Exchanging code at ${tokenEndpoint}`);
   const payload: any = {
     grant_type: 'authorization_code',
@@ -346,14 +305,9 @@ async function exchangeAuthCode(tokenEndpoint: string, code: string, codeVerifie
     redirect_uri: config.redirectUri,
     client_id: config.clients.regular.clientId, // Uses 'regular' client
     // client_secret: config.clients.regular.clientSecret, // REMOVED as per instruction
+    code_verifier: codeVerifier, // Directly assign, as it's guaranteed
   };
-  if (codeVerifier) { 
-    payload.code_verifier = codeVerifier;
-    console.log('    🔑 Using PKCE verifier');
-  } else {
-    console.warn('    ⚠️ PKCE verifier not provided for token exchange!'); // This line should not be hit
-  }
-  // The error occurs on the next line (axios.post)
+  console.log('    🔑 Using PKCE verifier');
   const res = await axios.post(tokenEndpoint, qs.stringify(payload), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
@@ -420,7 +374,7 @@ for (const tc of testCases) {
   const segments = [
     'Auth Flow',
     tc.acrValue ? `ACR=${tc.acrValue}` : `LoginType=${tc.loginType}`,
-    `PAR=${config.ping.usePAR}`, // PAR itself still togglable, but PKCE is now always on
+    // `PAR=${config.ping.usePAR}`, // REMOVED: PAR functionality removed
     `keepMeLoggedIn=${tc.keepMeLoggedIn}`,
   ];
   if (!tc.acrValue) {
@@ -442,7 +396,7 @@ for (const tc of testCases) {
       // Exchange the seed code to complete the login, even though we don't use the tokens directly
       // This ensures the session is fully established.
       if (seedAuthCode) {
-        await exchangeAuthCode(tokenUrl, seedAuthCode, seedCodeVerifier);
+        await exchangeAuthCode(tokenUrl, seedAuthCode, seedCodeVerifier); // No '!' needed
       }
     }
 
@@ -452,8 +406,7 @@ for (const tc of testCases) {
     expect(authCode).toBeTruthy();
 
     // Exchange for tokens & assertions
-    // codeVerifier will always be present from buildAuthUrl
-    const tokens = await exchangeAuthCode(tokenUrl, authCode, codeVerifier!);
+    const tokens = await exchangeAuthCode(tokenUrl, authCode, codeVerifier); // No '!' needed
     decodeJwt(tokens.access_token, 'Access Token');
     decodeJwt(tokens.id_token, 'ID Token');
     expect(tokens.access_token).toBeTruthy();
@@ -464,7 +417,7 @@ for (const tc of testCases) {
     if (tc.acrValue === 'Staples_ChangeUsername') {
       const idPayload = JSON.parse(Buffer.from(tokens.id_token.split('.')[1], 'base64').toString('utf8'));
       expect(idPayload.user_name).toBe(tc.newUsername);
-      console.log(`🏅 preferred_username was updated to ${tc.newUsername}`);
+      console.log(`🏅 user_name was updated to ${tc.newUsername}`);
     }
 
     // Queue logs for later retrieval
