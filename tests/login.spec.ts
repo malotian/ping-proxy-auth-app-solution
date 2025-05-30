@@ -309,7 +309,31 @@ async function loginAndCaptureCode(
   await page.context().grantPermissions(['geolocation'], { origin: config.ping.baseUrl });
   await page.context().setGeolocation({ latitude: 37.7749, longitude: -122.4194 });
 
-  await page.goto(authUrl);
+    // --- SET COOKIE AND MODIFY URL BEFORE NAVIGATION ---
+  const urlObject = new URL(authUrl);
+  const cookieDomain = urlObject.hostname;
+  const traceIdValue = crypto.randomUUID();
+
+  const cookieToSet = {
+    name: 'staples-cookie-trace-id', // Or just 'traceId' if that's preferred
+    value: traceIdValue,
+    domain: cookieDomain,
+    path: '/',
+    secure: urlObject.protocol === 'https:',
+    httpOnly: true,
+  };
+
+  console.log(`🍪 Setting cookie: Name='${cookieToSet.name}', Value='${cookieToSet.value}', Domain='${cookieToSet.domain}'`);
+  await page.context().addCookies([cookieToSet]);
+
+  const queryStringParamName = 'staples-querystring-trace-id';
+  urlObject.searchParams.set(queryStringParamName, traceIdValue);
+
+  const modifiedAuthUrl = urlObject.href; // This is the URL to navigate to
+
+  console.log(`🔗 Modified Auth URL with trace ID: ${modifiedAuthUrl}`);
+
+  await page.goto(modifiedAuthUrl); // Use the modified URL here
 
   if (tc.acrValue === 'Staples_ChangeUsername') {
     // ---- Change-Username flow ----
