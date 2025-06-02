@@ -230,8 +230,8 @@ async function initiateIdpRedirect(req, res, targetUrlStr, deviceId, acrValue = 
 
   if (acrValue) {
     params.append('acr_values', acrValue);
-    params.append('prompt', 'login');
-    params.append('service', 'ChangeUsername');
+    //params.append('prompt', 'login');
+    //params.append('service', 'ChangeUsername');
     
   }
 

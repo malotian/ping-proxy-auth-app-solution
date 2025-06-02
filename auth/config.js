@@ -12,7 +12,6 @@ module.exports = {
   port: process.env.PORT || 3002,
 
   // Build endpoints using env-derived DNS and realm (with optional overrides)
-  usePAR: true,
   idaasAuthorizeEndpoint:   `${internalIdentityServiceBaseUrl}/am/oauth2/${realm}/authorize`,
   idaasAccessTokenEndpoint: `${externaldentityServiceBaseUrl}/am/oauth2/${realm}/access_token`,
   idaasParEndpoint:         `${externaldentityServiceBaseUrl}/am/oauth2/${realm}/par`,
