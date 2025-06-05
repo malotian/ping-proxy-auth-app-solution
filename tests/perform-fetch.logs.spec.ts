@@ -15,6 +15,7 @@ const config = {
   },
   logsDir: 'test-logs', // Added for storing logs
   logQueueFile: path.join('test-logs', 'log_fetch_queue.json'), // File to store pending log tasks
+  clearPreviousLogs: true, // <-- NEW FLAG: Set to true to clear all previously fetched log subdirectories
 };
 
 interface LogFetchTask {
@@ -90,11 +91,35 @@ function getFormattedTimestamp(): string {
 test('Fetch All Collected Logs', async () => {
   console.log(`\n📜 Starting to fetch logs based on queue file: ${config.logQueueFile}`);
 
-  // Ensure the base logs directory exists, as beforeAll is not run for this file
+  // Ensure the base logs directory exists
   if (!fs.existsSync(config.logsDir)) {
     fs.mkdirSync(config.logsDir, { recursive: true });
     console.log(`📂 Created base logs directory (from fetch-logs): ${config.logsDir}`);
   }
+
+  // Clear previous logs if flag is set
+  if (config.clearPreviousLogs) {
+    console.log(`🗑️ Clearing previous log files from ${config.logsDir} due to clearPreviousLogs flag.`);
+    if (fs.existsSync(config.logsDir)) {
+      const entries = fs.readdirSync(config.logsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const entryPath = path.join(config.logsDir, entry.name);
+        if (entry.isDirectory()) { // Only delete subdirectories where logs are stored
+          try {
+            fs.rmSync(entryPath, { recursive: true, force: true });
+            console.log(`   🗑️ Deleted directory: ${entryPath}`);
+          } catch (err) {
+            console.error(`   ❌ Error deleting directory ${entryPath}:`, err);
+          }
+        }
+      }
+      console.log(`✅ Finished clearing previous log directories from ${config.logsDir}.`);
+    } else {
+      // This case should ideally not be hit if the directory creation above works
+      console.log(`ℹ️ Logs directory ${config.logsDir} does not exist, nothing to clear.`);
+    }
+  }
+
 
   let tasksToFetch: LogFetchTask[] = [];
   if (fs.existsSync(config.logQueueFile)) {
@@ -109,8 +134,7 @@ test('Fetch All Collected Logs', async () => {
       }
     } catch (err) {
       console.error(`❌ Error reading or parsing log queue file ${config.logQueueFile}:`, err);
-      // Optionally, decide not to proceed if the file is corrupt, e.g., return;
-      return;
+      return; // Stop if queue file is corrupt
     }
   }
 
@@ -120,28 +144,18 @@ test('Fetch All Collected Logs', async () => {
   }
   console.log(`📄 Found ${tasksToFetch.length} tasks in queue file.`);
 
-  // Optional: Add a small delay here if logs are not immediately available on the server
-  // after all functional tests have completed.
-  // const initialDelayMs = 5000; // 5 seconds
-  // console.log(`⏳ Waiting ${initialDelayMs / 1000} seconds before starting log fetching process...`);
-  // await new Promise(resolve => setTimeout(resolve, initialDelayMs));
-
   for (const task of tasksToFetch) {
     console.log(`\n➡️  Fetching logs for test: "${task.testTitle}", Transaction ID: ${task.transactionId}`);
     try {
-      // You might want a small delay between fetches if the API is rate-limited
-      // await new Promise(resolve => setTimeout(resolve, 500)); // 0.5 second delay
       await fetchAndSaveLogs(task.testTitle, task.transactionId);
     } catch (error) {
-      // Log the error but continue with other tasks
       console.error(`❌❌ Critical error during fetchAndSaveLogs for ${task.transactionId} (Test: ${task.testTitle}):`, error);
     }
   }
   console.log('✅ All scheduled log fetching tasks from file have been processed.');
 
-  // Archive the queue file after processing with the specified timestamp format
   try {
-    if (fs.existsSync(config.logQueueFile)) { // Check if file exists before trying to rename
+    if (fs.existsSync(config.logQueueFile)) {
         const timestamp = getFormattedTimestamp();
         const processedQueueFile = `${config.logQueueFile}_${timestamp}.processed`;
         fs.renameSync(config.logQueueFile, processedQueueFile);
@@ -152,6 +166,4 @@ test('Fetch All Collected Logs', async () => {
   } catch (err) {
     console.error(`⚠️ Error archiving log queue file ${config.logQueueFile}:`, err);
   }
-  // The following line is now superseded by the try-catch block above
-  // console.log(`ℹ️ Log queue file ${config.logQueueFile} was not cleared or archived as per request.`);
 });

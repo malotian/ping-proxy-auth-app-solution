@@ -1,5 +1,5 @@
 require("dotenv").config();
-const express =require("express");
+const express = require("express");
 const axios = require("axios");
 const cookieParser = require("cookie-parser");
 const { v4: uuidv4 } = require("uuid");
@@ -21,9 +21,8 @@ const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(({ level, message, timestamp, ...meta }) => {
-      return `${timestamp} [${level.toUpperCase()}] ${message}${
-        Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
-      }`;
+      return `${timestamp} [${level.toUpperCase()}] ${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""
+        }`;
     })
   ),
   transports: [new winston.transports.Console()],
@@ -33,7 +32,7 @@ const logger = winston.createLogger({
 app.use((req, res, next) => {
   req.correlationId = req.headers["proxy-correlation-id"] || uuidv4(); // Ensure correlationId always exists
   const clientIp = req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
-                   req.socket?.remoteAddress || "Unknown"; // Use req.socket for newer Node/Express
+    req.socket?.remoteAddress || "Unknown"; // Use req.socket for newer Node/Express
   logger.info("Auth Service received request", {
     correlationId: req.correlationId,
     method: req.method,
@@ -152,12 +151,12 @@ async function refreshTokenThrice(refreshToken, correlationId) {
       );
 
       latestRefreshResponse = refreshResponse; // Store the successful response
-      logger.info(`Attempt ${attempt}: Token refresh successful`, {correlationId, responseStatus: refreshResponse.status});
+      logger.info(`Attempt ${attempt}: Token refresh successful`, { correlationId, responseStatus: refreshResponse.status });
       // Check if data actually contains tokens before breaking
       if (refreshResponse.data && refreshResponse.data.access_token) {
         break; // Success, no need for more attempts
       } else {
-        logger.warn(`Attempt ${attempt}: Token refresh response did not contain access_token`, {correlationId, responseData: refreshResponse.data});
+        logger.warn(`Attempt ${attempt}: Token refresh response did not contain access_token`, { correlationId, responseData: refreshResponse.data });
         // Don't break if a retry might help, but typically IdP returns error or no token on failure.
         // For now, if no access_token, it's effectively a failure for this attempt.
         // If this was the last attempt, latestRefreshResponse will reflect this.
@@ -165,10 +164,10 @@ async function refreshTokenThrice(refreshToken, correlationId) {
     } catch (refreshError) {
       logger.warn(`Attempt ${attempt}: Token refresh failed with HTTP error`, {
         correlationId,
-        error: refreshError.response ? {status: refreshError.response.status, data: refreshError.response.data } : refreshError.message,
+        error: refreshError.response ? { status: refreshError.response.status, data: refreshError.response.data } : refreshError.message,
       });
       if (attempt === 3 || (refreshError.response && refreshError.response.status !== 500)) { // Don't retry client errors
-          break; // Break on error, especially if it's a client error or last attempt
+        break; // Break on error, especially if it's a client error or last attempt
       }
       // Optional: add a delay before retrying
       // await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
@@ -201,14 +200,14 @@ async function initiateIdpRedirect(req, res, targetUrlStr, deviceId, acrValue = 
   logger.info(`Initiating IDP redirect`, { correlationId, targetUrl: targetUrlStr, deviceId, acrValue });
 
   const newSessionId = uuidv4();
-  const stateId      = uuidv4();
-  const nonceId      = uuidv4(); // OIDC Nonce
+  const stateId = uuidv4();
+  const nonceId = uuidv4(); // OIDC Nonce
 
   const preAuthSession = {
-    StateID:     stateId,
-    NonceID:     nonceId,
+    StateID: stateId,
+    NonceID: nonceId,
     FingerPrint: deviceId,
-    TargetUrl:   targetUrlStr, // The original URL the user intended to access
+    TargetUrl: targetUrlStr, // The original URL the user intended to access
   };
 
   const pkce = generatePkceChallenge();
@@ -217,14 +216,14 @@ async function initiateIdpRedirect(req, res, targetUrlStr, deviceId, acrValue = 
 
   const txnId = 'app-txn-' + uuidv4();
   const params = new URLSearchParams({
-    client_id:             config.idaasClientID,
-    redirect_uri:          config.appCallbackEndpoint,
-    scope:                 config.scope,
-    response_type:         config.response_type, // e.g., "code"
-    state:                 stateId,
-    nonce:                 nonceId,
-    txn_id:                txnId,
-    code_challenge:        pkce.code_challenge,
+    client_id: config.idaasClientID,
+    redirect_uri: config.appCallbackEndpoint,
+    scope: config.scope,
+    response_type: config.response_type, // e.g., "code"
+    state: stateId,
+    nonce: nonceId,
+    txn_id: txnId,
+    code_challenge: pkce.code_challenge,
     code_challenge_method: pkce.code_challenge_method
   });
 
@@ -232,7 +231,7 @@ async function initiateIdpRedirect(req, res, targetUrlStr, deviceId, acrValue = 
     params.append('acr_values', acrValue);
     //params.append('prompt', 'login');
     //params.append('service', 'ChangeUsername');
-    
+
   }
 
   const authnUrl = `${config.idaasAuthorizeEndpoint}?${params.toString()}`;
@@ -243,7 +242,7 @@ async function initiateIdpRedirect(req, res, targetUrlStr, deviceId, acrValue = 
 
   return res.json({
     adviceHeaders: {
-      HTTP_STAPLES_AUTHN_URL:    authnUrl,
+      HTTP_STAPLES_AUTHN_URL: authnUrl,
       HTTP_STAPLES_COOKIE_VALUE: newSessionId // Proxy should set this cookie
     }
   });
@@ -342,13 +341,13 @@ app.post("/advice", async (req, res) => {
       // The Nonce in ID token should match session.NonceID.
 
       const finalSession = {
-        SessionID:      sessionId, // Keep SessionID for reference if needed by buildStaplesJWT
-        AccessToken:    tokenData.access_token,
-        IdToken:        tokenData.id_token,
-        RefreshToken:   tokenData.refresh_token,
+        SessionID: sessionId, // Keep SessionID for reference if needed by buildStaplesJWT
+        AccessToken: tokenData.access_token,
+        IdToken: tokenData.id_token,
+        RefreshToken: tokenData.refresh_token,
         KeepMeLoggedIn: !!tokenData.keep_me_logged_in, // Or however KMLI is indicated
-        FingerPrint:    session.FingerPrint, // Preserve fingerprint
-        TargetUrl:      session.TargetUrl,   // Preserve original target URL
+        FingerPrint: session.FingerPrint, // Preserve fingerprint
+        TargetUrl: session.TargetUrl,   // Preserve original target URL
         // UserInfo: could be fetched here using access_token if needed
       };
       sessionStore[sessionId] = finalSession; // Update session in store
@@ -424,7 +423,7 @@ app.post("/advice", async (req, res) => {
               }
             });
           } else {
-            logger.warn("Token refresh attempt did not yield a new access token.", { correlationId, sessionId, responseStatus: refreshRes ? refreshRes.status : 'N/A'});
+            logger.warn("Token refresh attempt did not yield a new access token.", { correlationId, sessionId, responseStatus: refreshRes ? refreshRes.status : 'N/A' });
           }
         } catch (err) {
           logger.error("Token refresh attempt failed with an error.", { correlationId, sessionId, error: err.message });
@@ -451,10 +450,10 @@ app.post("/advice", async (req, res) => {
 app.listen(config.port, "0.0.0.0", () => {
   logger.info(`Auth service listening on port ${config.port}.`);
   logger.debug("Configuration in use (sensitive values might be masked or omitted from log in production):", {
-      idaasAccessTokenEndpoint: config.idaasAccessTokenEndpoint,
-      idaasAuthorizeEndpoint: config.idaasAuthorizeEndpoint,
-      appCallbackEndpoint: config.appCallbackEndpoint,
-      scope: config.scope,
-      // Avoid logging client secrets directly here
+    idaasAccessTokenEndpoint: config.idaasAccessTokenEndpoint,
+    idaasAuthorizeEndpoint: config.idaasAuthorizeEndpoint,
+    appCallbackEndpoint: config.appCallbackEndpoint,
+    scope: config.scope,
+    // Avoid logging client secrets directly here
   });
 });

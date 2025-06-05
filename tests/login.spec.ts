@@ -39,6 +39,7 @@ const config = {
 };
 
 interface TestCase {
+  tags?: string[]; // Optional tags for categorization
   loginType: 'email' | 'username';
   identifier: string;
   password: string;
@@ -55,6 +56,7 @@ interface TestCase {
 const testCases: TestCase[] = [
   // Standard email login
   {
+    tags:['login'],    
     loginType: 'username',
     identifier: 'playwright',
     password: 'P@$$w0rd@123',
@@ -63,6 +65,7 @@ const testCases: TestCase[] = [
     showGuest: true,
   },
   {
+    tags:['login'],
     loginType: 'email',
     identifier: 'playwright@staples.com',
     password: 'P@$$w0rd@123',
@@ -70,14 +73,15 @@ const testCases: TestCase[] = [
     jumpUrl: 'https://www.staples.com/checkout',
     showGuest: true,
   },
-  // Change-Username flow (user must already be logged in)
+  // ChangeUsername flow (user must already be logged in)
   {
+    tags:['ChangeUsername'],
     loginType: 'email',
     identifier: 'playwright2@staples.com', // Initial identifier for seeding session
     password: 'P@$$w0rd@123',
     keepMeLoggedIn: false,
     showGuest: false,
-    acrValue: 'Staples_ChangeUsername',
+    acrValue: '__staples_h_a_change_user_name',
     newUsername: `pw_first_new_user_${Date.now()}@staples-test.com`,  // First new username
     newEmail: `pw_first_new_email_${Date.now()}@staples-test.com`,    // First new email
     secondNewUsername: `pw_second_new_user_${Date.now()}@staples-test.com`, // Second new username
@@ -141,7 +145,7 @@ test.afterAll(async () => {
 
 test.beforeEach(async ({ page }, testInfo) => {
   // Only clear cookies if not running Change_Username, so that ACR test can reuse session
-  if (!testInfo.title.includes('ACR=Staples_ChangeUsername')) {
+  if (!testInfo.title.includes('ACR=__staples_h_a_change_user_name')) {
     await clearAllCookiesForConfigDomain(page);
   }
   capturedTransactionIds = [];
@@ -339,8 +343,8 @@ async function loginAndCaptureCode(
 
   await page.goto(modifiedAuthUrl); // Use the modified URL here
 
-  if (tc.acrValue === 'Staples_ChangeUsername') {
-    // ---- Change-Username flow ----
+  if (tc.tags?.includes('ChangeUsername')) {
+    // ---- ChangeUsername flow ----
     expect(tc.newUsername).toBeDefined();
     expect(tc.newEmail).toBeDefined(); // Though not used in form, good to ensure data is present
 
@@ -475,7 +479,7 @@ for (const tc of testCases) {
   if (!tc.acrValue) {
     segments.push(`jumpUrl=${tc.jumpUrl ?? 'none'}`, `showGuest=${tc.showGuest}`);
   }
-  if (tc.acrValue === 'Staples_ChangeUsername' && tc.secondNewUsername) {
+  if (tc.tags?.includes('ChangeUsername') && tc.secondNewUsername) {
     segments.push(`doubleChange=true`);
   }
 
@@ -493,8 +497,8 @@ for (const tc of testCases) {
     let seedAccessTokenPayload: any;
     let seedSubFromToken: string | undefined;
 
-    // If Change-Username, first do a standard login so ACR will see an existing session
-    if (tc.acrValue === 'Staples_ChangeUsername') {
+    // If ChangeUsername, first do a standard login so ACR will see an existing session
+    if (tc.tags?.includes('ChangeUsername')) {
       console.log('🔏 Seeding session with standard login');
       // For seed, use the original identifier, not newUsername/newEmail etc.
       const standardTc: TestCase = {
@@ -617,7 +621,7 @@ for (const tc of testCases) {
         console.log(`🔬 [Introspection] Raw result for Main Op Access Token:`, mainOpAccessTokenIntro);
         expect(mainOpAccessTokenIntro.active).toBe(true);
         expect(mainOpAccessTokenIntro.client_id).toBe(config.clients.regular.clientId);
-        if (tc.acrValue === 'Staples_ChangeUsername' && seedSubFromToken) {
+        if (tc.tags?.includes('ChangeUsername') && seedSubFromToken) {
              expect(mainOpAccessTokenIntro.sub).toBe(seedSubFromToken);
              expect(mainOpAccessTokenIntro.username).toBe(seedSubFromToken); // Assuming username in AT introspection is sub
         } else {
@@ -631,13 +635,13 @@ for (const tc of testCases) {
       const mainOpUserInfo = await fetchUserInfo(userinfoUrl, mainOpTokens.access_token);
       if (mainOpUserInfo) {
         console.log(`ℹ️ [UserInfo] Raw result for Main Op User:`, mainOpUserInfo);
-        if (tc.acrValue === 'Staples_ChangeUsername' && seedSubFromToken) {
+        if (tc.tags?.includes('ChangeUsername') && seedSubFromToken) {
             expect(mainOpUserInfo.sub).toBe(seedSubFromToken);
         } else {
             expect(mainOpUserInfo.sub).toBeDefined();
         }
 
-        if (tc.acrValue === 'Staples_ChangeUsername') {
+        if (tc.tags?.includes('ChangeUsername')) {
             expect(mainOpUserInfo.user_name).toBe(tc.newUsername); // After 1st change
             //expect(mainOpUserInfo.email).toBe(tc.newEmail);       // After 1st change
         } else { // Standard login
@@ -654,7 +658,7 @@ for (const tc of testCases) {
     let secondChangeIdTokenDecoded: any;
     let secondChangeAccessTokenDecoded: any;
 
-    if (tc.acrValue === 'Staples_ChangeUsername' && tc.secondNewUsername) {
+    if (tc.tags?.includes('ChangeUsername') && tc.secondNewUsername) {
         console.log(`\n🔄🔄 Initiating second username change to ${tc.secondNewUsername} (from ${tc.newUsername})`);
 
         // Prepare TestCase data for the second ACR invocation
@@ -665,7 +669,7 @@ for (const tc of testCases) {
             identifier: tc.newUsername!, // The "current" username of the user for IdP context, if needed by IdP before ACR form.
             newUsername: tc.secondNewUsername, // This is the target for the *second* change
             newEmail: tc.secondNewEmail,       // This is the target email for the *second* change
-            acrValue: 'Staples_ChangeUsername', // Crucial: still an ACR flow
+            acrValue: '__staples_h_a_change_user_name', // Crucial: still an ACR flow
             // Reset other params not relevant for pure ACR on second round
             jumpUrl: undefined,
             showGuest: false,
@@ -692,7 +696,7 @@ for (const tc of testCases) {
         // Assertions for the second change
         if (secondChangeIdTokenDecoded) {
             expect(secondChangeIdTokenDecoded.user_name).toBe(tc.secondNewUsername);
-            expect(secondChangeIdTokenDecoded.acr).toBe('Staples_ChangeUsername');
+            expect(secondChangeIdTokenDecoded.acr).toBe('__staples_h_a_change_user_name');
         }
         console.log(`🏅 (Second Change) user_name in ID token verified as ${tc.secondNewUsername}`);
 
@@ -778,7 +782,7 @@ for (const tc of testCases) {
         expect(seedUserInfoAgain.sub).toBe(seedSubFromToken);
 
         // UserInfo reflects the *current* state of the user, so it should show the *latest* username/email
-        if (tc.acrValue === 'Staples_ChangeUsername') {
+        if (tc.tags?.includes('ChangeUsername')) {
             if (tc.secondNewUsername) { // If a second change happened
                 expect(seedUserInfoAgain.user_name).toBe(tc.secondNewUsername);
                 
@@ -795,17 +799,17 @@ for (const tc of testCases) {
     }
 
     // Verify the username change succeeded (final state)
-    if (tc.acrValue === 'Staples_ChangeUsername') {
+    if (tc.tags?.includes('ChangeUsername')) {
       if (tc.secondNewUsername && secondChangeIdTokenDecoded) {
           // If second change happened, the ID token from that flow has the final username
           expect(secondChangeIdTokenDecoded.user_name).toBe(tc.secondNewUsername);
-          expect(secondChangeIdTokenDecoded.acr).toBe('Staples_ChangeUsername');
+          expect(secondChangeIdTokenDecoded.acr).toBe('__staples_h_a_change_user_name');
           console.log(`🏅 Final user_name was confirmed as ${tc.secondNewUsername} (after second change)`);
       } else if (mainOpIdTokenDecoded) {
           // Only first change happened (or no secondNewUsername was provided)
           expect(mainOpIdTokenDecoded.user_name).toBe(tc.newUsername);
           if (mainOpIdTokenDecoded) {
-              expect(mainOpIdTokenDecoded.acr).toBe('Staples_ChangeUsername');
+              expect(mainOpIdTokenDecoded.acr).toBe('__staples_h_a_change_user_name');
           }
           console.log(`🏅 Final user_name was confirmed as ${tc.newUsername} (after first change)`);
       }
