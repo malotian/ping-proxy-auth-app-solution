@@ -34,7 +34,7 @@ function _generateRequestId() {
     // Assuming _logger is initialized by the time this function is called.
     _logger.warn("[KosmosSDK] Using a Math.random-based fallback for UUID generation. This is not cryptographically secure.");
 
-    uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
         return v.toString(16);
     });
@@ -90,99 +90,92 @@ function _fetchApi(endpoint, method, body, additionalHeaders) {
         headers: headers
     };
 
+    var requestBodyStr = null;
     if (body && Object.keys(body).length > 0) {
-        options.body = JSON.stringify(body);
+        requestBodyStr = JSON.stringify(body);
+        options.body = requestBodyStr;
     } else if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
-        options.body = JSON.stringify({});
+        requestBodyStr = JSON.stringify({});
+        options.body = requestBodyStr;
     }
 
-    _logger.debug('[KosmosSDK] Calling API: {} {} Headers: {} Request Body: {}', method, url, JSON.stringify(headers), options.body);
+    _logger.debug('[KosmosSDK] Calling API: {} {} Headers: {} Request Body: {}', method, url, JSON.stringify(headers), requestBodyStr);
 
-    return fetch(url, options)
-        .then(function(response) {
-            return response.text().then(function(responseText) {
-                _logger.debug('[KosmosSDK] API Response Status: {} Response Text: {}', response.status, responseText);
+    try {
+        var response = httpClient.send(url, options).get();
+        _logger.debug('[KosmosSDK] API Response Status: {} Response Text: {}', statusCode, responseText);
 
-                if (!response.ok) {
-                    var errorData;
-                    var apiErrorMessage = "Kosmos API request failed";
-                    try {
-                        errorData = JSON.parse(responseText);
-                        if (errorData && typeof errorData.message === 'string') {
-                            apiErrorMessage = errorData.message;
-                        } else if (errorData && typeof errorData.error === 'string') {
-                            apiErrorMessage = errorData.error;
-                        } else if (errorData && Array.isArray(errorData.errors) && errorData.errors.length > 0 && typeof errorData.errors[0].message === 'string') {
-                            apiErrorMessage = errorData.errors[0].message;
-                        } else if (responseText) {
-                            apiErrorMessage = responseText.substring(0, 200);
-                        }
-                    } catch (e) {
-                        errorData = responseText;
-                        if (responseText) {
-                           apiErrorMessage = responseText.substring(0, 200);
-                        } else {
-                           apiErrorMessage = response.statusText || "Kosmos API request failed without a message body";
-                        }
-                    }
-                    var error = new Error('Kosmos API Error: ' + apiErrorMessage);
-                    error.status = response.status;
-                    error.data = errorData;
-                    error.isApiError = true;
-                    _logger.error('[KosmosSDK] API Error Prepared: status={} data={} message={}', error.status, JSON.stringify(error.data), error.message);
-                    throw error;
-                }
+        if (!response){
+            var error = new Error('Kosmos API Error: Kosmos API request failed"');
+            error.status = response.status;
+            error.data = "response is null or undefined";
+            error.message = "Kosmos API request failed: response is null or undefined";
+            error.isApiError = true;
+            _logger.error('[KosmosSDK] API Error Prepared: status={} data={} message={}', error.status, JSON.stringify(error.data), error.message);
+            throw error;
+        }
 
-                if (response.status === 204 || !responseText) {
-                    _logger.debug("[KosmosSDK] Successful (204 No Content or empty body)");
-                    return {
-                        success: true,
-                        status: response.status,
-                        data: null,
-                        message: "Operation successful, no content returned."
-                    };
-                }
+        var statusCode = response.status;
+        var responseText = response.text(); // Use response.text() to get the full body as a string
+        var responseJson = response.json(); 
 
-                try {
-                    var parsedData = JSON.parse(responseText);
-                    _logger.debug("[KosmosSDK] Successful (JSON response): {}", JSON.stringify(parsedData));
-                    return {
-                        success: true,
-                        status: response.status,
-                        data: parsedData,
-                        message: "Operation successful."
-                    };
-                } catch (e) {
-                    _logger.debug("[KosmosSDK] Successful (Non-JSON response): {}", responseText);
-                    return {
-                        success: true,
-                        status: response.status,
-                        data: responseText,
-                        message: "Operation successful, non-JSON data returned."
-                    };
-                }
-            });
-        })
-        .catch(function(error) {
-            if (error.isApiError) {
-                _logger.error('[KosmosSDK] Re-throwing structured API error for {} {}: status={} data={} message={}', method, url, error.status, JSON.stringify(error.data), error.message);
-                throw error;
-            }
+        // Check for non-successful status codes (e.g., 4xx, 5xx)
+        if (statusCode < 200 || statusCode >= 300) {
+            var errorData;
+            var apiErrorMessage = "Kosmos API request failed";
+            throw error;
+        }
 
-            var clientErrorMessage = '[KosmosSDK] Network or client-side error for ' + method + ' ' + url + '.';
-            if (error instanceof TypeError && error.message && error.message.toLowerCase().indexOf("failed to fetch") > -1) {
-                 clientErrorMessage = '[KosmosSDK] Network Error: Failed to fetch. Check connection/CORS for ' + url + '. Details: ' + error.message;
-            } else if (error.message) {
-                clientErrorMessage = '[KosmosSDK] Client Error for ' + method + ' ' + url + ': ' + error.message;
-            }
+        // Handle successful responses
+        if (statusCode === 204 || !responseText) {
+            _logger.debug("[KosmosSDK] Successful (204 No Content or empty body)");
+            return {
+                success: true,
+                status: statusCode,
+                data: null,
+                message: "Operation successful, no content returned."
+            };
+        }
 
-            var clientError = new Error(clientErrorMessage);
-            clientError.isApiError = false;
-            clientError.data = error;
-            var originalErrorDataString = error instanceof Error ? error.toString() : JSON.stringify(error);
-            _logger.error('[KosmosSDK] Client-side/Network Error Prepared for {} {}: message={}, originalErrorData={}', method, url, clientError.message, originalErrorDataString);
-            throw clientError;
-        });
+        try {
+            // Attempt to parse the successful response as JSON
+            var parsedData = JSON.parse(responseText);
+            _logger.debug("[KosmosSDK] Successful (JSON response): {}", JSON.stringify(parsedData));
+            return {
+                success: true,
+                status: statusCode,
+                data: parsedData,
+                message: "Operation successful."
+            };
+        } catch (e) {
+            // If it's not JSON, return the raw text
+            _logger.debug("[KosmosSDK] Successful (Non-JSON response): {}", responseText);
+            return {
+                success: true,
+                status: statusCode,
+                data: responseText,
+                message: "Operation successful, non-JSON data returned."
+            };
+        }
+    } catch (error) {
+        // This outer catch handles both API errors thrown above and underlying client/network errors
+        if (error.isApiError) {
+            _logger.error('[KosmosSDK] Re-throwing structured API error for {} {}: status={} data={} message={}', method, url, error.status, JSON.stringify(error.data), error.message);
+            throw error;
+        }
+
+        var clientErrorMessage = '[KosmosSDK] Network or client-side error for ' + method + ' ' + url + '.';
+        if (error.message) {
+             clientErrorMessage = '[KosmosSDK] Client Error for ' + method + ' ' + url + ': ' + error.message;
+        }
+
+        var clientError = new Error(clientErrorMessage);
+        clientError.isApiError = false;
+        clientError.data = error;
+        var originalErrorDataString = error instanceof Error ? error.toString() : JSON.stringify(error);
+        _logger.error('[KosmosSDK] Client-side/Network Error Prepared for {} {}: message={}, originalErrorData={}', method, url, clientError.message, originalErrorDataString);
+        throw clientError;
+    }
 }
 
 /**
@@ -243,7 +236,7 @@ function init(userConfig) {
         }
 
         _logger = {
-            debug: function(messageTemplate) {
+            debug: function (messageTemplate) {
                 if (typeof console !== 'undefined' && (typeof console.debug === 'function' || typeof console.log === 'function')) {
                     var consoleArgs = _kosmosSdkFormatPingStyleForConsole.apply(null, arguments);
                     var finalArgs = ['[KosmosSDK DEBUG] ' + consoleArgs[0]];
@@ -253,8 +246,8 @@ function init(userConfig) {
                     (console.debug || console.log).apply(console, finalArgs);
                 }
             },
-            info: function(messageTemplate) {
-                 if (typeof console !== 'undefined' && (typeof console.info === 'function' || typeof console.log === 'function')) {
+            info: function (messageTemplate) {
+                if (typeof console !== 'undefined' && (typeof console.info === 'function' || typeof console.log === 'function')) {
                     var consoleArgs = _kosmosSdkFormatPingStyleForConsole.apply(null, arguments);
                     var finalArgs = ['[KosmosSDK INFO] ' + consoleArgs[0]];
                     for (var i = 1; i < consoleArgs.length; i++) {
@@ -263,8 +256,8 @@ function init(userConfig) {
                     (console.info || console.log).apply(console, finalArgs);
                 }
             },
-            warn: function(messageTemplate) {
-                 if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+            warn: function (messageTemplate) {
+                if (typeof console !== 'undefined' && typeof console.warn === 'function') {
                     var consoleArgs = _kosmosSdkFormatPingStyleForConsole.apply(null, arguments);
                     var finalArgs = ['[KosmosSDK WARN] ' + consoleArgs[0]];
                     for (var i = 1; i < consoleArgs.length; i++) {
@@ -273,8 +266,8 @@ function init(userConfig) {
                     console.warn.apply(console, finalArgs);
                 }
             },
-            error: function(messageTemplate) {
-                 if (typeof console !== 'undefined' && typeof console.error === 'function') {
+            error: function (messageTemplate) {
+                if (typeof console !== 'undefined' && typeof console.error === 'function') {
                     var consoleArgs = _kosmosSdkFormatPingStyleForConsole.apply(null, arguments);
                     var finalArgs = ['[KosmosSDK ERROR] ' + consoleArgs[0]];
                     for (var i = 1; i < consoleArgs.length; i++) {
@@ -364,7 +357,7 @@ function verifyOTP(params) {
     var tenantId = params.tenantId;
     var code = params.code;
 
-     if (!userId || !communityId || !tenantId || !code) {
+    if (!userId || !communityId || !tenantId || !code) {
         var clientError = new Error("[KosmosSDK Client Validation] Missing required parameters for verifyOTP: userId, communityId, tenantId, code are required.");
         clientError.isApiError = false;
         _logger.warn("[KosmosSDK Client Validation] Missing required parameters for verifyOTP. Provided params: {}", JSON.stringify(params));
