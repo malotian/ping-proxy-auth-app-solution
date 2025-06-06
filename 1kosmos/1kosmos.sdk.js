@@ -106,25 +106,27 @@ function _fetchApi(endpoint, method, body, additionalHeaders) {
         _logger.debug('[KosmosSDK] API Response Status: {} Response Text: {}', statusCode, responseText);
 
         if (!response){
-            var error = new Error('Kosmos API Error: Kosmos API request failed"');
-            error.status = response.status;
-            error.data = "response is null or undefined";
-            error.message = "Kosmos API request failed: response is null or undefined";
+            var error = new Error('Kosmos API Error: Did not receive a response object from the HTTP client.');
+            error.status = 0;
+            error.data = "The response object was null or undefined.";
             error.isApiError = true;
-            _logger.error('[KosmosSDK] API Error Prepared: status={} data={} message={}', error.status, JSON.stringify(error.data), error.message);
+            _logger.error('[KosmosSDK] API Error Prepared: status={} data={} message={}', error.status, error.data, error.message);
             throw error;
         }
-
+        // Check for non-successful status codes (e.g., 4xx, 5xx)
+        else if (statusCode < 200 || statusCode >= 300) {
+		
+            var error = new Error('Kosmos API Error: statusCode < 200 || statusCode >= 300');
+            error.status = statusCode;
+            error.data = response.json() ? response.json() : response.text();
+            error.isApiError = true;
+            _logger.error('[KosmosSDK] API Error Prepared: status={} data={} message={}', error.status, error.data, error.message);
+            throw error;
+        }
+		
         var statusCode = response.status;
         var responseText = response.text(); // Use response.text() to get the full body as a string
         var responseJson = response.json(); 
-
-        // Check for non-successful status codes (e.g., 4xx, 5xx)
-        if (statusCode < 200 || statusCode >= 300) {
-            var errorData;
-            var apiErrorMessage = "Kosmos API request failed";
-            throw error;
-        }
 
         // Handle successful responses
         if (statusCode === 204 || !responseText) {
