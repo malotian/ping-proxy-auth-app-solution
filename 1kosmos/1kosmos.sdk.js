@@ -51,132 +51,96 @@ function _generateRequestId() {
 }
 
 /**
- * Core function to make API calls.
+ * Core function to make API calls. It NEVER throws an exception.
+ * It returns a single, consistent result object where `ok` indicates success.
+ *
  * @param {string} endpoint - The API endpoint path.
  * @param {string} method - HTTP method.
  * @param {object} [body] - The request body. Optional.
  * @param {object} [additionalHeaders] - Additional headers. Optional.
- * @returns {Promise<object>}
+ * @returns {object} A consistent, detailed result object for success or any failure.
  */
 function _fetchApi(endpoint, method, body, additionalHeaders) {
-    body = body || null;
-    additionalHeaders = additionalHeaders || {};
-
     var url = _config.BASE_URL + endpoint;
     var requestId = _generateRequestId();
 
-    var baseHeaders = {
+    // --- Setup request options ---
+    var headers = {
         "Content-Type": "application/json",
         "licensekey": _config.LICENSE_KEY,
         "requestid": requestId,
         "noecdsa": _config.NO_ECDSA
     };
-
-    var headers = {};
-    var key;
-    for (key in baseHeaders) {
-        if (baseHeaders.hasOwnProperty(key)) {
-            headers[key] = baseHeaders[key];
+    if (additionalHeaders) {
+        for (var key in additionalHeaders) {
+            if (additionalHeaders.hasOwnProperty(key)) {
+                headers[key] = additionalHeaders[key];
+            }
         }
     }
-    for (key in additionalHeaders) {
-        if (additionalHeaders.hasOwnProperty(key)) {
-            headers[key] = additionalHeaders[key];
-        }
+    var options = { method: method, headers: headers };
+    if (body) {
+        options.body = JSON.stringify(body);
     }
-
-    var options = {
-        method: method,
-        headers: headers
-    };
-
-    var requestBodyStr = null;
-    if (body && Object.keys(body).length > 0) {
-        requestBodyStr = JSON.stringify(body);
-        options.body = requestBodyStr;
-    } else if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
-        requestBodyStr = JSON.stringify({});
-        options.body = requestBodyStr;
-    }
-
-    _logger.debug('[KosmosSDK] Calling API: {} {} Headers: {} Request Body: {}', method, url, JSON.stringify(headers), requestBodyStr);
+    
+    _logger.debug('[KosmosSDK] Calling API: {} {}', method, url);
 
     try {
         var response = httpClient.send(url, options).get();
-        _logger.debug('[KosmosSDK] API Response Status: {} Response Text: {}', statusCode, responseText);
 
-        if (!response){
-            var error = new Error('Kosmos API Error: Did not receive a response object from the HTTP client.');
-            error.status = 0;
-            error.data = "The response object was null or undefined.";
-            error.isApiError = true;
-            _logger.error('[KosmosSDK] API Error Prepared: status={} data={} message={}', error.status, error.data, error.message);
-            throw error;
-        }
-        // Check for non-successful status codes (e.g., 4xx, 5xx)
-        else if (statusCode < 200 || statusCode >= 300) {
-		
-            var error = new Error('Kosmos API Error: statusCode < 200 || statusCode >= 300');
-            error.status = statusCode;
-            error.data = response.json() ? response.json() : response.text();
-            error.isApiError = true;
-            _logger.error('[KosmosSDK] API Error Prepared: status={} data={} message={}', error.status, error.data, error.message);
-            throw error;
-        }
-		
-        var statusCode = response.status;
-        var responseText = response.text(); // Use response.text() to get the full body as a string
-        var responseJson = response.json(); 
+        // --- Initialize a consistent result object ---
+        var result = {
+            ok: false, // The single source of truth for success
+            status: 0,
+            statusText: "",
+            message: "",
+            json: null,
+            text: null,
+            headers: null,
+            error: null,
+            rawResponse: response
+        };
 
-        // Handle successful responses
-        if (statusCode === 204 || !responseText) {
-            _logger.debug("[KosmosSDK] Successful (204 No Content or empty body)");
-            return {
-                success: true,
-                status: statusCode,
-                data: null,
-                message: "Operation successful, no content returned."
-            };
+        if (!response) {
+            result.message = "HTTP Client Error: Did not receive a response object.";
+            result.error = new Error(result.message);
+            _logger.error("[KosmosSDK] " + result.message);
+            return result;
         }
 
-        try {
-            // Attempt to parse the successful response as JSON
-            var parsedData = JSON.parse(responseText);
-            _logger.debug("[KosmosSDK] Successful (JSON response): {}", JSON.stringify(parsedData));
-            return {
-                success: true,
-                status: statusCode,
-                data: response.json(),
-                message: "Operation successful."
-            };
-        } catch (e) {
-            // If it's not JSON, return the raw text
-            _logger.debug("[KosmosSDK] Successful (Non-JSON response): {}", responseText);
-            return {
-                success: true,
-                status: statusCode,
-                data: response.text(),
-                message: "Operation successful, non-JSON data returned."
-            };
+        // --- Populate the result directly from the response ---
+        result.ok = response.ok;
+        result.status = response.status;
+        result.statusText = response.statusText;
+        result.headers = response.headers;
+        
+        // Safely assign response body content, skipping for 204 No Content
+        if (result.status !== 204) {
+             result.text = response.text();
+             // Assuming .json() is a safe call in this environment
+             result.json = response.json();
         }
-    } catch (error) {
-        // This outer catch handles both API errors thrown above and underlying client/network errors
-        if (error.isApiError) {
-            _logger.error('[KosmosSDK] Re-throwing structured API error for {} {}: status={} data={} message={}', method, url, error.status, JSON.stringify(error.data), error.message);
-            throw error;
+        
+        // --- Set final message based on outcome ---
+        if (result.ok) {
+            result.message = "Operation successful" + (result.status === 204 ? ", no content returned." : ".");
+        } else {
+            result.message = "API Error: " + result.status + " " + result.statusText;
+            result.error = new Error(result.message);
+            _logger.error("[KosmosSDK] " + result.message + " | Body: " + (result.text || "Empty"));
         }
 
-        var clientErrorMessage = '[KosmosSDK] Network or client-side error for ' + method + ' ' + url + '.';
-        if (error.message) {
-             clientErrorMessage = '[KosmosSDK] Client Error for ' + method + ' ' + url + ': ' + error.message;
-        }
+        return result;
 
-        var clientError = new Error(clientErrorMessage);
-        clientError.isApiError = false;
-        clientError.data = error;
-        var originalErrorDataString = error instanceof Error ? error.toString() : JSON.stringify(error);
-        _logger.error('[KosmosSDK] Client-side/Network Error Prepared for {} {}: message={}, originalErrorData={}', method, url, clientError.message, originalErrorDataString);
-        throw clientError;
+    } catch (e) {
+        // --- Catches client-side exceptions (network, etc.) ---
+        _logger.error("[KosmosSDK] Unhandled exception during API call: " + e.message);
+        return {
+            ok: false, status: 0, statusText: "Client Exception",
+            message: "An unhandled exception occurred: " + e.message,
+            json: null, text: null, headers: null,
+            error: e, rawResponse: null
+        };
     }
 }
 
