@@ -175,10 +175,18 @@ function _kosmosSdkFormatPingStyleForConsole(messageTemplate) {
 
 /**
  * (ES5 Compatible)
- * Initializes the KosmosSDK with custom configuration and sets up the SDK's logger.
- * This function MUST be called before any other SDK function.
+ * Initializes the KosmosSDK with custom configuration and sets up a logger.
+ * This function must be called before any other SDK function to ensure proper setup.
+ * It merges user-provided configuration with the SDK's defaults and either adopts a
+ * provided global `logger` object or creates a console-based fallback.
  *
- * @param {object} userConfig - Configuration object.
+ * @param {object} [userConfig] - Optional. An object containing configuration properties to override SDK defaults.
+ * @param {string} [userConfig.BASE_URL] - The base URL for the 1Kosmos API (e.g., "https://staging.1kosmos.net").
+ * @param {string} [userConfig.LICENSE_KEY] - The license key for API authentication.
+ * @param {string} [userConfig.APP_ID_FOR_REQUEST] - An identifier for the application making the requests.
+ * @param {string} [userConfig.NO_ECDSA] - A flag (as a string, e.g., "true") to disable ECDSA.
+ * @param {string} [userConfig.TENANT_TAG] - The default X-TenantTag header value.
+ * @param {string} [userConfig.COMMUNITY_NAME] - The default community name used in API calls.
  */
 function init(userConfig) {
     userConfig = userConfig || {};
@@ -257,15 +265,18 @@ function init(userConfig) {
 }
 
 /**
- * Generates and sends an OTP.
- * @param {object} params - Parameters for sending OTP.
- * @param {string} params.userId
- * @param {string} params.communityId
- * @param {string} params.tenantId
- * @param {string} params.channel - 'sms', 'voice', or 'email'
- * @param {string} params.recipient - Phone number or email address
- * @param {string} [params.isdCode='1'] - ISD code for phone numbers
- * @returns {Promise<object>}
+ * Generates an OTP and sends it to a user via a specified channel (SMS, voice, or email).
+ * This function builds the request and calls the 1Kosmos /otp/generate API endpoint.
+ *
+ * @param {object} params - The parameters for the OTP generation request.
+ * @param {string} params.userId - The unique identifier for the user.
+ * @param {string} params.communityId - The identifier for the community the user belongs to.
+ * @param {string} params.tenantId - The identifier for the tenant associated with the user.
+ * @param {string} params.channel - The delivery channel for the OTP. Must be 'sms', 'voice', or 'email'.
+ * @param {string} params.recipient - The destination for the OTP (e.g., a phone number for SMS/voice, or an email address).
+ * @param {string} [params.isdCode='1'] - The International Subscriber Dialing code, required for 'sms' and 'voice' channels. Defaults to '1'.
+ * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success,
+ * or rejects with an Error on client-side validation failure.
  */
 function sendOTP(params) {
     params = params || {};
@@ -308,13 +319,16 @@ function sendOTP(params) {
 }
 
 /**
- * Verifies an OTP.
- * @param {object} params - Parameters for verifying OTP.
- * @param {string} params.userId
- * @param {string} params.communityId
- * @param {string} params.tenantId
- * @param {string} params.code - The OTP code
- * @returns {Promise<object>}
+ * Verifies a user-provided One-Time Password (OTP) against the 1Kosmos service.
+ * This function calls the /otp/verify API endpoint.
+ *
+ * @param {object} params - The parameters for the OTP verification request.
+ * @param {string} params.userId - The unique identifier for the user.
+ * @param {string} params.communityId - The identifier for the community the user belongs to.
+ * @param {string} params.tenantId - The identifier for the tenant associated with the user.
+ * @param {string} params.code - The OTP code that the user entered.
+ * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success,
+ * or rejects with an Error on client-side validation failure.
  */
 function verifyOTP(params) {
     params = params || {};
@@ -340,15 +354,20 @@ function verifyOTP(params) {
 }
 
 /**
- * Creates an access code and triggers sending a magic link email.
- * @param {object} params - Parameters for sending magic link.
- * @param {string} [params.communityName] - Optional community name, defaults to _config.COMMUNITY_NAME
- * @param {string} params.emailTo
- * @param {string} params.emailTemplateB64 - Base64 encoded email template
- * @param {string} params.emailSubject
- * @param {number} [params.ttl_seconds=700] - Time to live for the link
- * @param {string} [params.xTenantTag] - Optional X-TenantTag, defaults to _config.TENANT_TAG
- * @returns {Promise<object>}
+ * Creates an access code and triggers the sending of a magic link email to a user.
+ * This function constructs a request for the /acr/community/{communityName}/code API endpoint.
+ * The magic link allows for passwordless authentication or verification.
+ *
+ * @param {object} params - The parameters required to create and send the magic link.
+ * @param {string} params.emailTo - The recipient's email address.
+ * @param {string} params.emailTemplateB64 - A Base64-encoded HTML template for the email body. The template
+ *   must contain a placeholder for the magic link, which the backend will replace.
+ * @param {string} params.emailSubject - The subject line for the magic link email.
+ * @param {string} [params.communityName] - The name of the community. If not provided, the default from the SDK configuration is used.
+ * @param {number} [params.ttl_seconds=700] - The time-to-live for the magic link in seconds. Defaults to 700.
+ * @param {string} [params.xTenantTag] - The tenant tag for the request. If not provided, the default from the SDK configuration is used.
+ * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success, which includes the generated access code,
+ * or rejects with an Error on client-side validation failure.
  */
 function sendMagicLink(params) {
     params = params || {};
@@ -395,13 +414,17 @@ function sendMagicLink(params) {
 }
 
 /**
- * Redeems an access code (from a magic link).
- * @param {object} params - Parameters for redeeming magic link.
- * @param {string} [params.communityName] - Optional community name, defaults to _config.COMMUNITY_NAME
- * @param {string} params.accessCode
- * @param {string} params.publicKey
- * @param {string} [params.xTenantTag] - Optional X-TenantTag, defaults to _config.TENANT_TAG
- * @returns {Promise<object>}
+ * Redeems an access code obtained from a magic link to complete a verification or authentication flow.
+ * This function calls the /acr/community/{communityName}/{accessCode}/redeem API endpoint.
+ *
+ * @param {object} params - The parameters required to redeem the magic link's access code.
+ * @param {string} params.accessCode - The unique code from the magic link URL that is being redeemed.
+ * @param {string} params.publicKey - The public key of the user's device or browser, which may be used
+ *   to associate the device with the user's identity.
+ * @param {string} [params.communityName] - The name of the community. Defaults to the value in `_config.COMMUNITY_NAME`.
+ * @param {string} [params.xTenantTag] - The tenant tag for the request. Defaults to the value in `_config.TENANT_TAG`.
+ * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success,
+ * or rejects with an Error on client-side validation failure.
  */
 function redeemMagicLink(params) {
     params = params || {};
