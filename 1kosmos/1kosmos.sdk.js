@@ -146,7 +146,7 @@ function _fetchApi(endpoint, method, body, additionalHeaders) {
             return {
                 success: true,
                 status: statusCode,
-                data: parsedData,
+                data: response.json(),
                 message: "Operation successful."
             };
         } catch (e) {
@@ -155,7 +155,7 @@ function _fetchApi(endpoint, method, body, additionalHeaders) {
             return {
                 success: true,
                 status: statusCode,
-                data: responseText,
+                data: response.text(),
                 message: "Operation successful, non-JSON data returned."
             };
         }
