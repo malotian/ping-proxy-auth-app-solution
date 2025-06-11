@@ -103,7 +103,7 @@ function _fetchApi(endpoint, method, body, additionalHeaders) {
 
         if (!response) {
             result.message = "HTTP Client Error: Did not receive a response object.";
-            result.error = new Error(result.message);
+            result.error = result.message;
             _logger.error("[KosmosSDK] " + result.message);
             return result;
         }
@@ -126,7 +126,7 @@ function _fetchApi(endpoint, method, body, additionalHeaders) {
             result.message = "Operation successful" + (result.status === 204 ? ", no content returned." : ".");
         } else {
             result.message = "API Error: " + result.status + " " + result.statusText;
-            result.error = new Error(result.message);
+            result.error = result.message;
             _logger.error("[KosmosSDK] " + result.message + " | Body: " + (result.text || "Empty"));
         }
 
@@ -134,10 +134,10 @@ function _fetchApi(endpoint, method, body, additionalHeaders) {
 
     } catch (e) {
         // --- Catches client-side exceptions (network, etc.) ---
-        _logger.error("[KosmosSDK] Unhandled exception during API call: " + e.message);
+        _logger.error("[KosmosSDK] Unhandled exception during API call: " + (e.message || e));
         return {
             ok: false, status: 0, statusText: "Client Exception",
-            message: "An unhandled exception occurred: " + e.message,
+            message: "An unhandled exception occurred: " + (e.message || e),
             json: null, text: null, headers: null,
             error: e, rawResponse: null
         };
@@ -275,8 +275,7 @@ function init(userConfig) {
  * @param {string} params.channel - The delivery channel for the OTP. Must be 'sms', 'voice', or 'email'.
  * @param {string} params.recipient - The destination for the OTP (e.g., a phone number for SMS/voice, or an email address).
  * @param {string} [params.isdCode='1'] - The International Subscriber Dialing code, required for 'sms' and 'voice' channels. Defaults to '1'.
- * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success,
- * or rejects with an Error on client-side validation failure.
+ * @returns {object} A consistent result object. `ok: true` on success. On failure (client validation or API error), `ok: false` with details.
  */
 function sendOTP(params) {
     params = params || {};
@@ -288,10 +287,14 @@ function sendOTP(params) {
     var isdCode = params.isdCode === undefined ? '1' : params.isdCode;
 
     if (!userId || !communityId || !tenantId || !channel || !recipient) {
-        var clientValidationError1 = new Error("[KosmosSDK Client Validation] Missing required parameters for sendOTP: userId, communityId, tenantId, channel, recipient are required.");
-        clientValidationError1.isApiError = false;
+        var errorMessage1 = "[KosmosSDK Client Validation] Missing required parameters for sendOTP: userId, communityId, tenantId, channel, recipient are required.";
         _logger.warn("[KosmosSDK Client Validation] Missing required parameters for sendOTP. Provided params: {}", JSON.stringify(params));
-        return Promise.reject(clientValidationError1);
+        return {
+            ok: false, status: 0, statusText: "Client Validation Error",
+            message: errorMessage1,
+            json: null, text: null, headers: null,
+            error: errorMessage1, rawResponse: null
+        };
     }
 
     var body = {
@@ -309,10 +312,14 @@ function sendOTP(params) {
     } else if (channel === 'email') {
         body.emailTo = recipient;
     } else {
-        var clientValidationError2 = new Error("[KosmosSDK Client Validation] Invalid OTP channel. Use 'sms', 'voice', or 'email'.");
-        clientValidationError2.isApiError = false;
+        var errorMessage2 = "[KosmosSDK Client Validation] Invalid OTP channel. Use 'sms', 'voice', or 'email'.";
         _logger.warn("[KosmosSDK Client Validation] Invalid OTP channel: {}. Provided params: {}", channel, JSON.stringify(params));
-        return Promise.reject(clientValidationError2);
+        return {
+            ok: false, status: 0, statusText: "Client Validation Error",
+            message: errorMessage2,
+            json: null, text: null, headers: null,
+            error: errorMessage2, rawResponse: null
+        };
     }
     _logger.debug("[KosmosSDK] sendOTP: Calling API with body: {}", JSON.stringify(body));
     return _fetchApi("/api/r2/otp/generate", "POST", body);
@@ -327,8 +334,7 @@ function sendOTP(params) {
  * @param {string} params.communityId - The identifier for the community the user belongs to.
  * @param {string} params.tenantId - The identifier for the tenant associated with the user.
  * @param {string} params.code - The OTP code that the user entered.
- * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success,
- * or rejects with an Error on client-side validation failure.
+ * @returns {object} A consistent result object. `ok: true` on success. On failure (client validation or API error), `ok: false` with details.
  */
 function verifyOTP(params) {
     params = params || {};
@@ -338,10 +344,14 @@ function verifyOTP(params) {
     var code = params.code;
 
     if (!userId || !communityId || !tenantId || !code) {
-        var clientError = new Error("[KosmosSDK Client Validation] Missing required parameters for verifyOTP: userId, communityId, tenantId, code are required.");
-        clientError.isApiError = false;
+        var errorMessage = "[KosmosSDK Client Validation] Missing required parameters for verifyOTP: userId, communityId, tenantId, code are required.";
         _logger.warn("[KosmosSDK Client Validation] Missing required parameters for verifyOTP. Provided params: {}", JSON.stringify(params));
-        return Promise.reject(clientError);
+        return {
+            ok: false, status: 0, statusText: "Client Validation Error",
+            message: errorMessage,
+            json: null, text: null, headers: null,
+            error: errorMessage, rawResponse: null
+        };
     }
     var body = {
         userId: userId,
@@ -366,8 +376,7 @@ function verifyOTP(params) {
  * @param {string} [params.communityName] - The name of the community. If not provided, the default from the SDK configuration is used.
  * @param {number} [params.ttl_seconds=700] - The time-to-live for the magic link in seconds. Defaults to 700.
  * @param {string} [params.xTenantTag] - The tenant tag for the request. If not provided, the default from the SDK configuration is used.
- * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success, which includes the generated access code,
- * or rejects with an Error on client-side validation failure.
+ * @returns {object} A consistent result object. `ok: true` on success. On failure (client validation or API error), `ok: false` with details.
  */
 function sendMagicLink(params) {
     params = params || {};
@@ -379,10 +388,14 @@ function sendMagicLink(params) {
     var xTenantTag = params.xTenantTag;
 
     if (!emailTo || !emailTemplateB64 || !emailSubject) {
-        var clientError = new Error("[KosmosSDK Client Validation] Missing required parameters for sendMagicLink (emailTo, emailTemplateB64, emailSubject).");
-        clientError.isApiError = false;
+        var errorMessage = "[KosmosSDK Client Validation] Missing required parameters for sendMagicLink (emailTo, emailTemplateB64, emailSubject).";
         _logger.warn("[KosmosSDK Client Validation] Missing required parameters for sendMagicLink. Provided params: {}", JSON.stringify(params));
-        return Promise.reject(clientError);
+        return {
+            ok: false, status: 0, statusText: "Client Validation Error",
+            message: errorMessage,
+            json: null, text: null, headers: null,
+            error: errorMessage, rawResponse: null
+        };
     }
     var targetCommunityName = communityName || _config.COMMUNITY_NAME;
     var targetTenantTag = xTenantTag || _config.TENANT_TAG;
@@ -423,8 +436,7 @@ function sendMagicLink(params) {
  *   to associate the device with the user's identity.
  * @param {string} [params.communityName] - The name of the community. Defaults to the value in `_config.COMMUNITY_NAME`.
  * @param {string} [params.xTenantTag] - The tenant tag for the request. Defaults to the value in `_config.TENANT_TAG`.
- * @returns {Promise<object>} A promise that resolves with the API result object from `_fetchApi` on success,
- * or rejects with an Error on client-side validation failure.
+ * @returns {object} A consistent result object. `ok: true` on success. On failure (client validation or API error), `ok: false` with details.
  */
 function redeemMagicLink(params) {
     params = params || {};
@@ -434,10 +446,14 @@ function redeemMagicLink(params) {
     var xTenantTag = params.xTenantTag;
 
     if (!accessCode || !publicKey) {
-        var clientError = new Error("[KosmosSDK Client Validation] Missing required parameters for redeemMagicLink (accessCode, publicKey).");
-        clientError.isApiError = false;
+        var errorMessage = "[KosmosSDK Client Validation] Missing required parameters for redeemMagicLink (accessCode, publicKey).";
         _logger.warn("[KosmosSDK Client Validation] Missing required parameters for redeemMagicLink. Provided params: {}", JSON.stringify(params));
-        return Promise.reject(clientError);
+        return {
+            ok: false, status: 0, statusText: "Client Validation Error",
+            message: errorMessage,
+            json: null, text: null, headers: null,
+            error: errorMessage, rawResponse: null
+        };
     }
     var targetCommunityName = communityName || _config.COMMUNITY_NAME;
     var targetTenantTag = xTenantTag || _config.TENANT_TAG;
