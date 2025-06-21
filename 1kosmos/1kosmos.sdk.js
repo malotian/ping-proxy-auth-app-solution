@@ -284,7 +284,7 @@ function sendOTP(params) {
     var tenantId = params.tenantId;
     var channel = params.channel;
     var recipient = params.recipient;
-    var isdCode = params.isdCode === undefined ? '1' : params.isdCode;
+    var isdCode = params.isdCode === undefined ? '91' : params.isdCode;
 
     if (!userId || !communityId || !tenantId || !channel || !recipient) {
         var errorMessage1 = "[KosmosSDK Client Validation] Missing required parameters for sendOTP: userId, communityId, tenantId, channel, recipient are required.";
@@ -378,6 +378,22 @@ function verifyOTP(params) {
  * @param {string} [params.xTenantTag] - The tenant tag for the request. If not provided, the default from the SDK configuration is used.
  * @returns {object} A consistent result object. `ok: true` on success. On failure (client validation or API error), `ok: false` with details.
  */
+/**
+ * Creates an access code and triggers the sending of a magic link email to a user.
+ * This function constructs a request for the /acr/community/{communityName}/code API endpoint.
+ * The magic link allows for passwordless authentication or verification.
+ * If emailTemplateB64 or emailSubject are null or undefined, they are omitted from the request body.
+ *
+ * @param {object} params - The parameters required to create and send the magic link.
+ * @param {string} params.emailTo - The recipient's email address.
+ * @param {string} [params.emailTemplateB64] - A Base64-encoded HTML template for the email body. The template
+ *   must contain a placeholder for the magic link, which the backend will replace.
+ * @param {string} [params.emailSubject] - The subject line for the magic link email.
+ * @param {string} [params.communityName] - The name of the community. If not provided, the default from the SDK configuration is used.
+ * @param {number} [params.ttl_seconds=700] - The time-to-live for the magic link in seconds. Defaults to 700.
+ * @param {string} [params.xTenantTag] - The tenant tag for the request. If not provided, the default from the SDK configuration is used.
+ * @returns {object} A consistent result object. `ok: true` on success. On failure (client validation or API error), `ok: false` with details.
+ */
 function sendMagicLink(params) {
     params = params || {};
     var communityName = params.communityName;
@@ -387,9 +403,9 @@ function sendMagicLink(params) {
     var ttl_seconds = params.ttl_seconds === undefined ? 700 : params.ttl_seconds;
     var xTenantTag = params.xTenantTag;
 
-    if (!emailTo || !emailTemplateB64 || !emailSubject) {
-        var errorMessage = "[KosmosSDK Client Validation] Missing required parameters for sendMagicLink (emailTo, emailTemplateB64, emailSubject).";
-        _logger.warn("[KosmosSDK Client Validation] Missing required parameters for sendMagicLink. Provided params: {}", JSON.stringify(params));
+    if (!emailTo) {
+        var errorMessage = "[KosmosSDK Client Validation] Missing required parameter for sendMagicLink (emailTo).";
+        _logger.warn("[KosmosSDK Client Validation] Missing required parameter for sendMagicLink. Provided params: {}", JSON.stringify(params));
         return {
             ok: false, status: 0, statusText: "Client Validation Error",
             message: errorMessage,
@@ -405,10 +421,15 @@ function sendMagicLink(params) {
         version: "v0",
         type: "verification_link",
         emailTo: emailTo,
-        ttl_seconds: ttl_seconds,
-        emailTemplateB64: emailTemplateB64,
-        emailSubject: emailSubject
+        ttl_seconds: ttl_seconds
     };
+    if (emailTemplateB64 != null) {
+        body.emailTemplateB64 = emailTemplateB64;
+    }
+    if (emailSubject != null) {
+        body.emailSubject = emailSubject;
+    }
+
     var additionalHeaders = { "X-TenantTag": targetTenantTag };
     var endpoint = "/api/r2/acr/community/" + encodeURIComponent(targetCommunityName) + "/code";
 
@@ -419,7 +440,7 @@ function sendMagicLink(params) {
         emailTo: body.emailTo,
         ttl_seconds: body.ttl_seconds,
         emailSubject: body.emailSubject,
-        emailTemplateB64: "OMITTED_FOR_LOG"
+        emailTemplateB64: body.emailTemplateB64 ? "OMITTED_FOR_LOG" : undefined
     };
     _logger.debug("[KosmosSDK] sendMagicLink: Calling API for community '{}', tenantTag '{}', endpoint '{}', body: {}",
         targetCommunityName, targetTenantTag, endpoint, JSON.stringify(loggableBody));
@@ -468,6 +489,7 @@ function redeemMagicLink(params) {
         targetCommunityName, targetTenantTag, accessCode, endpoint);
     return _fetchApi(endpoint, "POST", body, additionalHeaders);
 }
+
 
 // --- Exports ---
 if (typeof exports === 'undefined') {

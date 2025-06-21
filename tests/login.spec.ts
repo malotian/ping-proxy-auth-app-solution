@@ -56,7 +56,7 @@ interface TestCase {
 const testCases: TestCase[] = [
   // Standard email login
   {
-    tags:['login'],    
+    tags: ['login'],
     loginType: 'username',
     identifier: 'playwright',
     password: 'P@$$w0rd@123',
@@ -65,7 +65,7 @@ const testCases: TestCase[] = [
     showGuest: true,
   },
   {
-    tags:['login'],
+    tags: ['login'],
     loginType: 'email',
     identifier: 'playwright@staples.com',
     password: 'P@$$w0rd@123',
@@ -75,13 +75,13 @@ const testCases: TestCase[] = [
   },
   // ChangeUsername flow (user must already be logged in)
   {
-    tags:['ChangeUsername'],
+    tags: ['ChangeUsername'],
     loginType: 'email',
     identifier: 'playwright2@staples.com', // Initial identifier for seeding session
     password: 'P@$$w0rd@123',
     keepMeLoggedIn: false,
     showGuest: false,
-    acrValue: '__staples_h_a_change_user_name',
+    acrValue: 'StaplesProfileUpdateUsername',
     newUsername: `pw_first_new_user_${Date.now()}@staples-test.com`,  // First new username
     newEmail: `pw_first_new_email_${Date.now()}@staples-test.com`,    // First new email
     secondNewUsername: `pw_second_new_user_${Date.now()}@staples-test.com`, // Second new username
@@ -317,7 +317,7 @@ async function loginAndCaptureCode(
   await page.context().grantPermissions(['geolocation'], { origin: config.ping.baseUrl });
   await page.context().setGeolocation({ latitude: 37.7749, longitude: -122.4194 });
 
-    // --- SET COOKIE AND MODIFY URL BEFORE NAVIGATION ---
+  // --- SET COOKIE AND MODIFY URL BEFORE NAVIGATION ---
   const urlObject = new URL(authUrl);
   const cookieDomain = urlObject.hostname;
   const traceIdValue = crypto.randomUUID();
@@ -344,6 +344,9 @@ async function loginAndCaptureCode(
   await page.goto(modifiedAuthUrl); // Use the modified URL here
 
   if (tc.tags?.includes('ChangeUsername')) {
+
+    console.log(`\n🔄 Starting ChangeUsername flow for user: ${tc.identifier}, tc.newUsername=${tc.newUsername}, tc.tags=`, tc.tags);
+
     // ---- ChangeUsername flow ----
     expect(tc.newUsername).toBeDefined();
     expect(tc.newEmail).toBeDefined(); // Though not used in form, good to ensure data is present
@@ -483,7 +486,6 @@ for (const tc of testCases) {
     segments.push(`doubleChange=true`);
   }
 
-
   test(segments.join(' | '), async ({ page }, testInfo) => {
     console.log(`\n🎬 Starting test: ${tc.acrValue ?? tc.loginType} (PKCE: ${config.usePKCE})`);
 
@@ -502,18 +504,21 @@ for (const tc of testCases) {
       console.log('🔏 Seeding session with standard login');
       // For seed, use the original identifier, not newUsername/newEmail etc.
       const standardTc: TestCase = {
-          ...tc, // Copy base properties
-          acrValue: undefined, // Standard login, no ACR
-          newUsername: undefined, // Not used for seed login
-          newEmail: undefined, // Not used for seed login
-          secondNewUsername: undefined, // Not used for seed login
-          secondNewEmail: undefined, // Not used for seed login
-          // Keep tc.identifier (original email/username for seed login)
-          // Keep tc.password
-          // Keep tc.keepMeLoggedIn for seed phase if needed (current ACR tc has it false)
-          showGuest: false, // Typically not shown for programmatic seed
-          jumpUrl: undefined, // No jump for seed
+        ...tc, // Copy base properties
+        acrValue: undefined, // Standard login, no ACR
+        newUsername: undefined, // Not used for seed login
+        newEmail: undefined, // Not used for seed login
+        secondNewUsername: undefined, // Not used for seed login
+        secondNewEmail: undefined, // Not used for seed login
+        // Keep tc.identifier (original email/username for seed login)
+        // Keep tc.password
+        // Keep tc.keepMeLoggedIn for seed phase if needed (current ACR tc has it false)
+        showGuest: false, // Typically not shown for programmatic seed
+        jumpUrl: undefined, // No jump for seed
+        tags: ['SeedSession'], // Tag for clarity
       };
+
+
       const { authUrl: loginUrl, codeVerifier: seedCodeVerifier } = await buildAuthUrl(openid.authorization_endpoint, standardTc);
       const { authCode: seedAuthCode } = await loginAndCaptureCode(page, loginUrl, standardTc);
 
@@ -567,7 +572,7 @@ for (const tc of testCases) {
             expect(seedUserInfo.sub).toBe(seedSubFromToken);
             expect(seedUserInfo.email).toBe(standardTc.identifier); // Seed user has original email
             if (seedIdTokenPayload) { // Username in UserInfo should match what was in the ID token from seed
-                expect(seedUserInfo.user_name).toBe(seedIdTokenPayload.user_name);
+              expect(seedUserInfo.user_name).toBe(seedIdTokenPayload.user_name);
             }
           }
         }
@@ -577,171 +582,180 @@ for (const tc of testCases) {
     // Now invoke the real flow (standard or FIRST ACR)
     console.log(`\n🎬🎬 Initiating main operation (Login or First ACR: ${tc.acrValue ?? tc.loginType}) using identifier: ${tc.identifier} and newUsername: ${tc.newUsername}`);
     const { authUrl, codeVerifier } = await buildAuthUrl(openid.authorization_endpoint, tc); // Uses original `tc` for first ACR or standard login
-    const { authCode, transactionId: mainOpTransactionId } = await loginAndCaptureCode(page, authUrl, tc); // Uses original `tc`
+    const { authCode, transactionId: firstChangeOpTransactionId } = await loginAndCaptureCode(page, authUrl, tc); // Uses original `tc`
     expect(authCode).toBeTruthy();
 
     // Exchange for tokens & assertions (for the FIRST change or standard login)
-    const mainOpTokens = await exchangeAuthCode(tokenUrl, authCode, codeVerifier); // Pass optional codeVerifier
+    const firstChangeOpTokens = await exchangeAuthCode(tokenUrl, authCode, codeVerifier); // Pass optional codeVerifier
 
-    const mainOpIdTokenDecoded = decodeJwt(mainOpTokens.id_token, 'ID Token (Main Op/First Change)');
-    const mainOpAccessTokenDecoded = decodeJwt(mainOpTokens.access_token, 'Access Token (Main Op/First Change)');
-    expect(mainOpTokens.access_token).toBeTruthy();
-    expect(mainOpTokens.id_token).toBeTruthy();
-    if (!tc.acrValue) expect(mainOpTokens.refresh_token).toBeTruthy();
-    else expect(mainOpTokens.refresh_token).toBeTruthy();
+    const firstChangeOpIdTokenDecoded = decodeJwt(firstChangeOpTokens.id_token, 'ID Token (Main Op/First Change)');
+    const firstChangeOpAccessTokenDecoded = decodeJwt(firstChangeOpTokens.access_token, 'Access Token (Main Op/First Change)');
+    expect(firstChangeOpTokens.access_token).toBeTruthy();
+    expect(firstChangeOpTokens.id_token).toBeTruthy();
+    if (!tc.acrValue) expect(firstChangeOpTokens.refresh_token).toBeTruthy();
+    else expect(firstChangeOpTokens.refresh_token).toBeTruthy();
 
-    expect(mainOpIdTokenDecoded).toBeTruthy();
-    expect(mainOpAccessTokenDecoded).toBeTruthy();
-    const mainOpSubFromToken = mainOpAccessTokenDecoded.sub;
+    expect(firstChangeOpIdTokenDecoded).toBeTruthy();
+    expect(firstChangeOpAccessTokenDecoded).toBeTruthy();
+    expect(firstChangeOpIdTokenDecoded.user_name).toBe(tc.newUsername);
+    expect(firstChangeOpIdTokenDecoded.acr).toBe(tc.acrValue);
+    console.log(`🏅 Final user_name was confirmed as ${tc.newUsername} (after first change)`);
 
 
-    if (mainOpTokens && mainOpTokens.id_token) {
-      const mainOpIdTokenIntro = await introspectToken(
+    const firstChangeOpSubFromToken = firstChangeOpAccessTokenDecoded.sub;
+
+
+    if (firstChangeOpTokens && firstChangeOpTokens.id_token) {
+      const firstChangeOpIdTokenIntro = await introspectToken(
         introspectionUrl,
-        mainOpTokens.id_token,
+        firstChangeOpTokens.id_token,
         config.clients.regular.clientId,
         config.clients.regular.clientSecret,
         "id_token"
       );
-      if (mainOpIdTokenIntro) {
-        console.log(`🔬 [Introspection] Raw result for Main Op ID Token:`, mainOpIdTokenIntro);
-        expect(mainOpIdTokenIntro.active).toBe(false);
+      if (firstChangeOpIdTokenIntro) {
+        console.log(`🔬 [Introspection] Raw result for Main Op ID Token:`, firstChangeOpIdTokenIntro);
+        expect(firstChangeOpIdTokenIntro.active).toBe(false);
       }
     }
 
-    if (mainOpTokens && mainOpTokens.access_token) {
-      const mainOpAccessTokenIntro = await introspectToken(
+    if (firstChangeOpTokens && firstChangeOpTokens.access_token) {
+      const firstChangeOpAccessTokenIntro = await introspectToken(
         introspectionUrl,
-        mainOpTokens.access_token,
+        firstChangeOpTokens.access_token,
         config.clients.regular.clientId,
         config.clients.regular.clientSecret,
         "access_token"
       );
-      if (mainOpAccessTokenIntro) {
-        console.log(`🔬 [Introspection] Raw result for Main Op Access Token:`, mainOpAccessTokenIntro);
-        expect(mainOpAccessTokenIntro.active).toBe(true);
-        expect(mainOpAccessTokenIntro.client_id).toBe(config.clients.regular.clientId);
+      if (firstChangeOpAccessTokenIntro) {
+        console.log(`🔬 [Introspection] Raw result for Main Op Access Token:`, firstChangeOpAccessTokenIntro);
+        expect(firstChangeOpAccessTokenIntro.active).toBe(true);
+        expect(firstChangeOpAccessTokenIntro.client_id).toBe(config.clients.regular.clientId);
         if (tc.tags?.includes('ChangeUsername') && seedSubFromToken) {
-             expect(mainOpAccessTokenIntro.sub).toBe(seedSubFromToken);
-             expect(mainOpAccessTokenIntro.username).toBe(seedSubFromToken); // Assuming username in AT introspection is sub
+          expect(firstChangeOpAccessTokenIntro.sub).toBe(seedSubFromToken);
+          expect(firstChangeOpAccessTokenIntro.username).toBe(seedSubFromToken); // Assuming username in AT introspection is sub
         } else {
-            expect(mainOpAccessTokenIntro.sub).toBeDefined();
-            expect(mainOpAccessTokenIntro.username).toBeDefined();
+          expect(firstChangeOpAccessTokenIntro.sub).toBeDefined();
+          expect(firstChangeOpAccessTokenIntro.username).toBeDefined();
         }
-        expect(mainOpAccessTokenIntro.exp).toBeGreaterThan(Date.now() / 1000);
+        expect(firstChangeOpAccessTokenIntro.exp).toBeGreaterThan(Date.now() / 1000);
       }
 
-      console.log('Main Op Access Token:', mainOpTokens.access_token);
-      const mainOpUserInfo = await fetchUserInfo(userinfoUrl, mainOpTokens.access_token);
-      if (mainOpUserInfo) {
-        console.log(`ℹ️ [UserInfo] Raw result for Main Op User:`, mainOpUserInfo);
+      console.log('Main Op Access Token:', firstChangeOpTokens.access_token);
+      const firstChangeOpUserInfo = await fetchUserInfo(userinfoUrl, firstChangeOpTokens.access_token);
+      if (firstChangeOpUserInfo) {
+        console.log(`ℹ️ [UserInfo] Raw result for Main Op User:`, firstChangeOpUserInfo);
         if (tc.tags?.includes('ChangeUsername') && seedSubFromToken) {
-            expect(mainOpUserInfo.sub).toBe(seedSubFromToken);
+          expect(firstChangeOpUserInfo.sub).toBe(seedSubFromToken);
         } else {
-            expect(mainOpUserInfo.sub).toBeDefined();
+          expect(firstChangeOpUserInfo.sub).toBeDefined();
         }
 
         if (tc.tags?.includes('ChangeUsername')) {
-            expect(mainOpUserInfo.user_name).toBe(tc.newUsername); // After 1st change
-            //expect(mainOpUserInfo.email).toBe(tc.newEmail);       // After 1st change
+          expect(firstChangeOpUserInfo.user_name).toBe(tc.newUsername); // After 1st change
+          //expect(firstChangeOpUserInfo.email).toBe(tc.newEmail);       // After 1st change
         } else { // Standard login
-            expect(mainOpUserInfo.email).toBe(tc.identifier);
-            if (mainOpIdTokenDecoded) {
-                expect(mainOpUserInfo.user_name).toBe(mainOpIdTokenDecoded.user_name);
-            }
+          expect(firstChangeOpUserInfo.email).toBe(tc.identifier);
+          if (firstChangeOpIdTokenDecoded) {
+            expect(firstChangeOpUserInfo.user_name).toBe(firstChangeOpIdTokenDecoded.user_name);
+          }
         }
       }
     }
 
     // --- SECOND USERNAME CHANGE (if applicable) ---
-    let secondChangeTokens: any;
-    let secondChangeIdTokenDecoded: any;
-    let secondChangeAccessTokenDecoded: any;
+    let secondChangeOpTokens: any;
+    let secondChangeOpIdTokenDecoded: any;
+    let secondChangeOpAccessTokenDecoded: any;
 
     if (tc.tags?.includes('ChangeUsername') && tc.secondNewUsername) {
-        console.log(`\n🔄🔄 Initiating second username change to ${tc.secondNewUsername} (from ${tc.newUsername})`);
+      console.log(`\n🔄🔄 Initiating second username change to ${tc.secondNewUsername} (from ${tc.newUsername})`);
 
-        // Prepare TestCase data for the second ACR invocation
-        // The session is already established and reflects the first username change.
-        // loginAndCaptureCode will use `newUsername` from this object to fill the form.
-        const secondChangeTcData: TestCase = {
-            ...tc, // Base on original tc to carry over password, etc.
-            identifier: tc.newUsername!, // The "current" username of the user for IdP context, if needed by IdP before ACR form.
-            newUsername: tc.secondNewUsername, // This is the target for the *second* change
-            newEmail: tc.secondNewEmail,       // This is the target email for the *second* change
-            acrValue: '__staples_h_a_change_user_name', // Crucial: still an ACR flow
-            // Reset other params not relevant for pure ACR on second round
-            jumpUrl: undefined,
-            showGuest: false,
-            secondNewUsername: undefined, // Prevent recursion if this object were reused
-            secondNewEmail: undefined,
-        };
-        console.log(`   Data for second change: newUsername=${secondChangeTcData.newUsername}, newEmail=${secondChangeTcData.newEmail}`);
+      // Prepare TestCase data for the second ACR invocation
+      // The session is already established and reflects the first username change.
+      // loginAndCaptureCode will use `newUsername` from this object to fill the form.
+      const secondChangeOpTcData: TestCase = {
+        ...tc, // Base on original tc to carry over password, etc.
+        identifier: tc.newUsername!, // The "current" username of the user for IdP context, if needed by IdP before ACR form.
+        newUsername: tc.secondNewUsername, // This is the target for the *second* change
+        newEmail: tc.secondNewEmail,       // This is the target email for the *second* change
+        acrValue: tc.acrValue, // Crucial: still an ACR flow
+        // Reset other params not relevant for pure ACR on second round
+        jumpUrl: undefined,
+        showGuest: false,
+        secondNewUsername: undefined, // Prevent recursion if this object were reused
+        secondNewEmail: undefined,
+      };
 
-        const { authUrl: secondAuthUrl, codeVerifier: secondCodeVerifier } = await buildAuthUrl(openid.authorization_endpoint, secondChangeTcData);
-        const { authCode: secondAuthCode, transactionId: secondChangeTransactionId } = await loginAndCaptureCode(page, secondAuthUrl, secondChangeTcData);
-        expect(secondAuthCode).toBeTruthy();
+      console.log(`   Data for second change: newUsername=${secondChangeOpTcData.newUsername}, newEmail=${secondChangeOpTcData.newEmail}`);
 
-        secondChangeTokens = await exchangeAuthCode(tokenUrl, secondAuthCode, secondCodeVerifier);
-        secondChangeIdTokenDecoded = decodeJwt(secondChangeTokens.id_token, 'ID Token (Second Change)');
-        secondChangeAccessTokenDecoded = decodeJwt(secondChangeTokens.access_token, 'Access Token (Second Change)');
+      const { authUrl: secondAuthUrl, codeVerifier: secondCodeVerifier } = await buildAuthUrl(openid.authorization_endpoint, secondChangeOpTcData);
+      const { authCode: secondAuthCode, transactionId: secondChangeOpTransactionId } = await loginAndCaptureCode(page, secondAuthUrl, secondChangeOpTcData);
+      expect(secondAuthCode).toBeTruthy();
 
-        expect(secondChangeTokens.access_token).toBeTruthy();
-        expect(secondChangeTokens.id_token).toBeTruthy();
-        expect(secondChangeTokens.refresh_token).toBeTruthy(); // Assuming refresh token is still issued
+      secondChangeOpTokens = await exchangeAuthCode(tokenUrl, secondAuthCode, secondCodeVerifier);
+      secondChangeOpIdTokenDecoded = decodeJwt(secondChangeOpTokens.id_token, 'ID Token (Second Change)');
+      secondChangeOpAccessTokenDecoded = decodeJwt(secondChangeOpTokens.access_token, 'Access Token (Second Change)');
 
-        expect(secondChangeIdTokenDecoded).toBeTruthy();
-        expect(secondChangeAccessTokenDecoded).toBeTruthy();
+      expect(secondChangeOpTokens.access_token).toBeTruthy();
+      expect(secondChangeOpTokens.id_token).toBeTruthy();
+      expect(secondChangeOpTokens.refresh_token).toBeTruthy(); // Assuming refresh token is still issued
+      expect(secondChangeOpIdTokenDecoded).toBeTruthy();
+      expect(secondChangeOpAccessTokenDecoded).toBeTruthy();
 
-        // Assertions for the second change
-        if (secondChangeIdTokenDecoded) {
-            expect(secondChangeIdTokenDecoded.user_name).toBe(tc.secondNewUsername);
-            expect(secondChangeIdTokenDecoded.acr).toBe('__staples_h_a_change_user_name');
+      expect(secondChangeOpIdTokenDecoded.user_name).toBe(tc.secondNewUsername);
+      expect(secondChangeOpIdTokenDecoded.acr).toBe(tc.acrValue);
+      console.log(`🏅 Final user_name was confirmed as ${tc.secondNewUsername} (after second change)`);
+
+      // Assertions for the second change
+      if (secondChangeOpIdTokenDecoded) {
+        expect(secondChangeOpIdTokenDecoded.user_name).toBe(tc.secondNewUsername);
+        expect(secondChangeOpIdTokenDecoded.acr).toBe(tc.acrValue);
+      }
+      console.log(`🏅 (Second Change) user_name in ID token verified as ${tc.secondNewUsername}`);
+
+      // Introspect and UserInfo for second change tokens
+      if (secondChangeOpTokens && secondChangeOpTokens.id_token) {
+        const secondChangeOpIdTokenIntro = await introspectToken(
+          introspectionUrl,
+          secondChangeOpTokens.id_token,
+          config.clients.regular.clientId,
+          config.clients.regular.clientSecret,
+          "id_token"
+        );
+        if (secondChangeOpIdTokenIntro) {
+          console.log(`🔬 [Introspection] Raw result for Second Change ID Token:`, secondChangeOpIdTokenIntro);
+          expect(secondChangeOpIdTokenIntro.active).toBe(false);
         }
-        console.log(`🏅 (Second Change) user_name in ID token verified as ${tc.secondNewUsername}`);
-
-        // Introspect and UserInfo for second change tokens
-        if (secondChangeTokens && secondChangeTokens.id_token) {
-            const secondChangeIdTokenIntro = await introspectToken(
-                introspectionUrl,
-                secondChangeTokens.id_token,
-                config.clients.regular.clientId,
-                config.clients.regular.clientSecret,
-                "id_token"
-              );
-              if (secondChangeIdTokenIntro) {
-                console.log(`🔬 [Introspection] Raw result for Second Change ID Token:`, secondChangeIdTokenIntro);
-                expect(secondChangeIdTokenIntro.active).toBe(false);
-              }
-        }
-        if (secondChangeTokens && secondChangeTokens.access_token) {
-            const secondChangeAccessTokenIntro = await introspectToken(
-                introspectionUrl,
-                secondChangeTokens.access_token,
-                config.clients.regular.clientId,
-                config.clients.regular.clientSecret,
-                "access_token"
-              );
-              if (secondChangeAccessTokenIntro) {
-                console.log(`🔬 [Introspection] Raw result for Second Change Access Token:`, secondChangeAccessTokenIntro);
-                expect(secondChangeAccessTokenIntro.active).toBe(true);
-                expect(secondChangeAccessTokenIntro.client_id).toBe(config.clients.regular.clientId);
-                expect(secondChangeAccessTokenIntro.sub).toBe(seedSubFromToken); // Sub should remain constant
-                expect(secondChangeAccessTokenIntro.username).toBe(seedSubFromToken); // Assuming username in AT is sub
-                expect(secondChangeAccessTokenIntro.exp).toBeGreaterThan(Date.now() / 1000);
-              }
-
-            const secondChangeUserInfo = await fetchUserInfo(userinfoUrl, secondChangeTokens.access_token);
-            if (secondChangeUserInfo) {
-                console.log(`ℹ️ [UserInfo] Raw result for User (after Second Change):`, secondChangeUserInfo);
-                expect(secondChangeUserInfo.sub).toBe(seedSubFromToken); // Sub should remain constant
-                expect(secondChangeUserInfo.user_name).toBe(tc.secondNewUsername); // Username reflects second change
-            }
+      }
+      if (secondChangeOpTokens && secondChangeOpTokens.access_token) {
+        const secondChangeOpAccessTokenIntro = await introspectToken(
+          introspectionUrl,
+          secondChangeOpTokens.access_token,
+          config.clients.regular.clientId,
+          config.clients.regular.clientSecret,
+          "access_token"
+        );
+        if (secondChangeOpAccessTokenIntro) {
+          console.log(`🔬 [Introspection] Raw result for Second Change Access Token:`, secondChangeOpAccessTokenIntro);
+          expect(secondChangeOpAccessTokenIntro.active).toBe(true);
+          expect(secondChangeOpAccessTokenIntro.client_id).toBe(config.clients.regular.clientId);
+          expect(secondChangeOpAccessTokenIntro.sub).toBe(seedSubFromToken); // Sub should remain constant
+          expect(secondChangeOpAccessTokenIntro.username).toBe(seedSubFromToken); // Assuming username in AT is sub
+          expect(secondChangeOpAccessTokenIntro.exp).toBeGreaterThan(Date.now() / 1000);
         }
 
-        if (secondChangeTransactionId) {
-            appendTaskToLogQueue({ testTitle: `${testInfo.title} (Second Change)`, transactionId: secondChangeTransactionId });
+        const secondChangeOpUserInfo = await fetchUserInfo(userinfoUrl, secondChangeOpTokens.access_token);
+        if (secondChangeOpUserInfo) {
+          console.log(`ℹ️ [UserInfo] Raw result for User (after Second Change):`, secondChangeOpUserInfo);
+          expect(secondChangeOpUserInfo.sub).toBe(seedSubFromToken); // Sub should remain constant
+          expect(secondChangeOpUserInfo.user_name).toBe(tc.secondNewUsername); // Username reflects second change
         }
+      }
+
+      if (secondChangeOpTransactionId) {
+        appendTaskToLogQueue({ testTitle: `${testInfo.title} (Second Change)`, transactionId: secondChangeOpTransactionId });
+      }
     }
 
 
@@ -783,41 +797,23 @@ for (const tc of testCases) {
 
         // UserInfo reflects the *current* state of the user, so it should show the *latest* username/email
         if (tc.tags?.includes('ChangeUsername')) {
-            if (tc.secondNewUsername) { // If a second change happened
-                expect(seedUserInfoAgain.user_name).toBe(tc.secondNewUsername);
-                
-                //expect(seedUserInfoAgain.email).toBe(tc.secondNewEmail);
-            } else { // Only the first change happened
-                expect(seedUserInfoAgain.user_name).toBe(tc.newUsername);
-                //expect(seedUserInfoAgain.email).toBe(tc.newEmail);
-            }
+          if (tc.secondNewUsername) { // If a second change happened
+            expect(seedUserInfoAgain.user_name).toBe(tc.secondNewUsername);
+            //expect(seedUserInfoAgain.email).toBe(tc.secondNewEmail);
+          } else { // Only the first change happened
+            expect(seedUserInfoAgain.user_name).toBe(tc.newUsername);
+            //expect(seedUserInfoAgain.email).toBe(tc.newEmail);
+          }
         } else if (seedIdTokenPayload) { // Fallback to original seed username if not a change username flow
-            expect(seedUserInfoAgain.user_name).toBe(seedIdTokenPayload.user_name);
-            expect(seedUserInfoAgain.email).toBe(tc.identifier); // Original seed email
+          expect(seedUserInfoAgain.user_name).toBe(seedIdTokenPayload.user_name);
+          expect(seedUserInfoAgain.email).toBe(tc.identifier); // Original seed email
         }
       }
     }
 
-    // Verify the username change succeeded (final state)
-    if (tc.tags?.includes('ChangeUsername')) {
-      if (tc.secondNewUsername && secondChangeIdTokenDecoded) {
-          // If second change happened, the ID token from that flow has the final username
-          expect(secondChangeIdTokenDecoded.user_name).toBe(tc.secondNewUsername);
-          expect(secondChangeIdTokenDecoded.acr).toBe('__staples_h_a_change_user_name');
-          console.log(`🏅 Final user_name was confirmed as ${tc.secondNewUsername} (after second change)`);
-      } else if (mainOpIdTokenDecoded) {
-          // Only first change happened (or no secondNewUsername was provided)
-          expect(mainOpIdTokenDecoded.user_name).toBe(tc.newUsername);
-          if (mainOpIdTokenDecoded) {
-              expect(mainOpIdTokenDecoded.acr).toBe('__staples_h_a_change_user_name');
-          }
-          console.log(`🏅 Final user_name was confirmed as ${tc.newUsername} (after first change)`);
-      }
-    }
-
     // Queue logs for the main/first operation's transaction
-    if (mainOpTransactionId) {
-      appendTaskToLogQueue({ testTitle: testInfo.title, transactionId: mainOpTransactionId });
+    if (firstChangeOpTransactionId) {
+      appendTaskToLogQueue({ testTitle: testInfo.title, transactionId: firstChangeOpTransactionId });
     }
 
     console.log(`✅ Test finished: ${testInfo.title}`);
