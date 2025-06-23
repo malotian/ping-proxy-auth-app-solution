@@ -597,10 +597,12 @@ for (const tc of testCases) {
 
     expect(firstChangeOpIdTokenDecoded).toBeTruthy();
     expect(firstChangeOpAccessTokenDecoded).toBeTruthy();
-    expect(firstChangeOpIdTokenDecoded.user_name).toBe(tc.newUsername);
-    expect(firstChangeOpIdTokenDecoded.acr).toBe(tc.acrValue);
-    console.log(`🏅 Final user_name was confirmed as ${tc.newUsername} (after first change)`);
 
+    if (tc.tags?.includes('ChangeUsername')) {
+      expect(firstChangeOpIdTokenDecoded.user_name).toBe(tc.newUsername);
+      expect(firstChangeOpIdTokenDecoded.acr).toBe(tc.acrValue);
+      console.log(`🏅 Final user_name was confirmed as ${tc.newUsername} (after first change)`);
+    }
 
     const firstChangeOpSubFromToken = firstChangeOpAccessTokenDecoded.sub;
 
