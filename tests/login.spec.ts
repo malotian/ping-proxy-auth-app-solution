@@ -657,7 +657,12 @@ for (const tc of testCases) {
           expect(firstChangeOpUserInfo.user_name).toBe(tc.newUsername); // After 1st change
           //expect(firstChangeOpUserInfo.email).toBe(tc.newEmail);       // After 1st change
         } else { // Standard login
-          expect(firstChangeOpUserInfo.email).toBe(tc.identifier);
+
+          if (tc.loginType === 'email') {
+            expect(firstChangeOpUserInfo.email).toBe(tc.identifier);
+          } else {
+            expect(firstChangeOpUserInfo.user_name).toBe(tc.identifier);
+          }
           if (firstChangeOpIdTokenDecoded) {
             expect(firstChangeOpUserInfo.user_name).toBe(firstChangeOpIdTokenDecoded.user_name);
           }
