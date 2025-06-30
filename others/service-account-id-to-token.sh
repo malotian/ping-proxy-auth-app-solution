@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-SERVICE_ACCOUNT_ID=36e073e4-fa88-4fd1-a0af-73fd825c7cbf
-AUD=https://identity-qe.staples.com/am/oauth2/access_token
-SCOPE=fr:idc:proxy-connect:*
+SERVICE_ACCOUNT_ID=6baa6436-d95c-4a61-b5f4-9a81cc261289
+AUD=https://openam-staplesciam-use4-dev.id.forgerock.io/am/oauth2/access_token
+SCOPE=fr:am:*
 
 # Exit immediately if a command exits with a non-zero status.
 set -e
@@ -136,7 +136,8 @@ CURL_ESCAPED_SCOPE_CONTENT="$REQUEST_SCOPE"
 CURL_DATA_URLENCODE_SCOPE_ARG="scope=${CURL_ESCAPED_SCOPE_CONTENT}"
 
 # Construct the printable command string
-PRINTABLE_CURL_COMMAND=$(printf 'curl -sS --request POST %s \\\n  --data "%s" \\\n  --data "%s" \\\n  --data-urlencode "%s" \\\n  --data-urlencode "%s"' \
+PRINTABLE_CURL_COMMAND=$(printf 'curl -sS --header "x-IDaaS-ProxyConnect:sL7AeLsyi3" \
+  --request POST %s \\\n  --data "%s" \\\n  --data "%s" \\\n  --data-urlencode "%s" \\\n  --data-urlencode "%s"' \
     "$AUDIENCE_URL" \
     "$CURL_DATA_CLIENT_ID" \
     "$CURL_DATA_GRANT_TYPE" \
