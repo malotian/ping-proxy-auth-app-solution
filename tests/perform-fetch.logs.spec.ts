@@ -14,7 +14,7 @@ const config = {
     pageSize: 1000,
   },
   logsDir: 'test-logs', // Added for storing logs
-  logQueueFile: path.join('test-logs', 'log_fetch_queue.json'), // File to store pending log tasks
+  logQueueFile: path.join('test-logs', 'log-fetch-queue.json'), // File to store pending log tasks
   clearPreviousLogs: true, // <-- NEW FLAG: Set to true to clear all previously fetched log subdirectories
 };
 

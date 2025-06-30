@@ -8,7 +8,7 @@ const config = {
     baseUrl: 'https://identity-qe.staples.com',
   },
   logsDir: 'test-logs',
-  logQueueFile: path.join('test-logs', 'log_fetch_queue.json'),
+  logQueueFile: path.join('test-logs', 'log-fetch-queue.json'),
 };
 
 // ---------- TEST CASES (NEW STRUCTURE) ----------
@@ -23,19 +23,11 @@ interface TestCase {
 
 const testCases: TestCase[] = [
   {
-    name: '__Staples_H_S_SendEmailNotification',
+    name: 'Test-SendEmailForgotPassword',
     journey: {
       realm: '/alpha',
       authIndexType: 'service',
-      authIndexValue: '__Staples_H_S_SendEmailNotification',
-    },
-  },
-  {
-    name: '__staples_h_1kosmos#',
-    journey: {
-      realm: '/alpha',
-      authIndexType: 'service',
-      authIndexValue: '__staples_h_1kosmos#',
+      authIndexValue: '__staples_h_user_util_lib_test',
     },
   },
   // Add more test cases here as needed
@@ -169,7 +161,7 @@ test.describe('Invoke', () => {
 
       await page.goto(url);
 
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(3000);
 
       if (capturedFullTransactionIdsForCurrentTest.length > 0) {
         console.log(`✅ [${name}] Captured FULL Transaction IDs:`, capturedFullTransactionIdsForCurrentTest);

@@ -35,7 +35,7 @@ const config = {
     pageSize: 1000,
   },
   logsDir: 'test-logs',
-  logQueueFile: path.join('test-logs', 'log_fetch_queue.json'),
+  logQueueFile: path.join('test-logs', 'log-fetch-queue.json'),
 };
 
 interface TestCase {

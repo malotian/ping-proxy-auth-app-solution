@@ -13,6 +13,23 @@ set -o pipefail
 
 # --- Configuration & Input Validation ---
 
+# Parse command line options
+EXECUTE_CURL=false
+while getopts "x" opt; do
+    case $opt in
+        x)
+            EXECUTE_CURL=true
+            ;;
+        \?)
+            echo >&2 "Invalid option: -$OPTARG"
+            echo >&2 "Usage: $0 [-x] [service_account_id] [audience_url] [scope]"
+            echo >&2 "  -x: Execute the curl command (default: just print)"
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
 # Check required tools
 command -v jose >/dev/null 2>&1 || { echo >&2 "Error: 'jose' command not found. Please install jose-util."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo >&2 "Error: 'curl' command not found."; exit 1; }
@@ -73,7 +90,7 @@ echo "Step 2: Creating and signing JWT..."
 
 # Calculate Expiration Time (15 minutes = 899 seconds)
 # Note: date -u ensures UTC time is used for the timestamp
-EXP=$(($(date -u +%s) + 899))
+EXP=$(($(date -u +%s) + 86300))
 echo "Calculated Expiry (exp): $EXP"
 
 # Generate Unique JWT ID (JTI)
@@ -149,13 +166,55 @@ echo "Executing command:"
 echo -e "$PRINTABLE_CURL_COMMAND" # -e interprets backslashes for newline
 echo # Extra newline for separation before execution output
 
-CURL_EXIT_CODE=$? # Capture exit code immediately
+if [[ "$EXECUTE_CURL" == true ]]; then
+    # Execute the actual curl command and capture response
+    RESPONSE=$(curl -sS --header "x-IDaaS-ProxyConnect:sL7AeLsyi3" \
+      --request POST "$AUDIENCE_URL" \
+      --data "$CURL_DATA_CLIENT_ID" \
+      --data "$CURL_DATA_GRANT_TYPE" \
+      --data-urlencode "assertion=$ASSERTION" \
+      --data-urlencode "scope=$REQUEST_SCOPE")
 
-# Check if curl command succeeded and got a response
-if [[ "$CURL_EXIT_CODE" -ne 0 ]]; then
-    echo >&2 "Error: curl command failed with exit code $CURL_EXIT_CODE."
-    # Cleanup intermediate files
-    rm -f "$PAYLOAD_FILE" "$JWT_FILE"
-    exit 1
+    CURL_EXIT_CODE=$? # Capture exit code immediately
+
+    # Check if curl command succeeded and got a response
+    if [[ "$CURL_EXIT_CODE" -ne 0 ]]; then
+        echo >&2 "Error: curl command failed with exit code $CURL_EXIT_CODE."
+        # Cleanup intermediate files
+        rm -f "$PAYLOAD_FILE" "$JWT_FILE"
+        exit 1
+    fi
+
+    echo "--- Response ---"
+    echo "$RESPONSE"
+    echo "---------------"
+    echo
+
+    # Extract and print access token
+    if command -v jq >/dev/null 2>&1; then
+        ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token // empty')
+        if [[ -n "$ACCESS_TOKEN" && "$ACCESS_TOKEN" != "null" ]]; then
+            echo "Access Token:"
+            echo "$ACCESS_TOKEN"
+        else
+            echo >&2 "Warning: Could not extract access_token from response."
+            echo >&2 "Response: $RESPONSE"
+        fi
+    else
+        # Fallback without jq - simple grep/sed extraction
+        ACCESS_TOKEN=$(echo "$RESPONSE" | grep -o '"access_token":"[^"]*"' | sed 's/"access_token":"//' | sed 's/"$//')
+        if [[ -n "$ACCESS_TOKEN" ]]; then
+            echo "Access Token:"
+            echo "$ACCESS_TOKEN"
+        else
+            echo >&2 "Warning: Could not extract access_token from response."
+            echo >&2 "Response: $RESPONSE"
+        fi
+    fi
+else
+    echo "Note: Use -x flag to execute the command above."
 fi
+
+# Cleanup intermediate files
+rm -f "$PAYLOAD_FILE" "$JWT_FILE"
 exit 0
